@@ -1,5 +1,7 @@
+use serde::Serialize;
+
 /// Named style definition.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Style {
     /// Style name (Korean or English).
     pub name: String,

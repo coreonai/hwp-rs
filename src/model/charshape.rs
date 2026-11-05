@@ -1,6 +1,8 @@
+use serde::Serialize;
+
 /// Character shape — font, size, color, decorations.
 /// `font_ids` is indexed by script type: Korean=0, English=1, Hanja=2, Japanese=3, Other=4, Symbol=5, User=6.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CharShape {
     /// Font face IDs per script type (7 entries).
     pub font_ids: [u16; 7],
@@ -63,7 +65,8 @@ impl Default for CharShape {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UnderlineType {
     #[default]
     None,
@@ -97,7 +100,8 @@ impl From<u8> for UnderlineType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StrikeoutType {
     #[default]
     None,
@@ -115,7 +119,8 @@ impl From<u8> for StrikeoutType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OutlineType {
     #[default]
     None,
@@ -141,7 +146,8 @@ impl From<u8> for OutlineType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ShadowType {
     #[default]
     None,
