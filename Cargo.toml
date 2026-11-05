@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Rust parser for Hancom Office HWP5 (.hwp) and HWPX (.hwpx) documents"
 license = "MIT"
+repository = "https://github.com/coreonai/hwp-rs"
+homepage = "https://github.com/coreonai/hwp-rs"
+keywords = ["hwp", "hwpx", "hancom", "parser", "korean"]
+categories = ["parser-implementations", "text-processing"]
+readme = "README.md"
 
 [dependencies]
 cfb = "0.10"
