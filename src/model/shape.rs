@@ -1,5 +1,8 @@
+use serde::Serialize;
+
 /// Drawing shape objects.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ShapeObject {
     Line {
         x0: i32,

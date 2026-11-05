@@ -1,5 +1,7 @@
+use serde::Serialize;
+
 /// Paragraph shape — alignment, spacing, indentation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ParaShape {
     pub align: Alignment,
     /// Line spacing in HWP units or percentage depending on `line_spacing_type`.
@@ -56,7 +58,8 @@ impl Default for ParaShape {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Alignment {
     #[default]
     Justify,
@@ -82,7 +85,8 @@ impl From<u8> for Alignment {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SpacingType {
     #[default]
     Percent,

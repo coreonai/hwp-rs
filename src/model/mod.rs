@@ -12,8 +12,10 @@ pub use shape::ShapeObject;
 pub use style::Style;
 pub use table::{Cell, Table};
 
+use serde::Serialize;
+
 /// Top-level HWP document.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct HwpDocument {
     pub header: FileHeader,
     pub doc_info: DocInfo,
@@ -22,7 +24,7 @@ pub struct HwpDocument {
 }
 
 /// File header metadata.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct FileHeader {
     /// Major.minor.build.revision
     pub version: (u8, u8, u8, u8),
@@ -40,7 +42,7 @@ pub struct FileHeader {
 }
 
 /// Document-wide information (shape tables, fonts, styles).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct DocInfo {
     pub char_shapes: Vec<CharShape>,
     pub para_shapes: Vec<ParaShape>,
@@ -55,14 +57,14 @@ pub struct DocInfo {
 }
 
 /// A single section of the document.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Section {
     pub sec_def: SecDef,
     pub paragraphs: Vec<Paragraph>,
 }
 
 /// Section definition (page layout).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SecDef {
     pub page_def: PageDef,
     pub columns: u16,
@@ -71,7 +73,7 @@ pub struct SecDef {
 }
 
 /// Page dimensions and margins (in hwp units = 1/7200 inch).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PageDef {
     pub width: u32,
     pub height: u32,
@@ -103,7 +105,7 @@ impl Default for PageDef {
 }
 
 /// A paragraph within a section.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Paragraph {
     /// Plain text content (special chars replaced with markers).
     pub text: String,
@@ -120,7 +122,7 @@ pub struct Paragraph {
 }
 
 /// A run of characters sharing the same character shape.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct CharRun {
     /// Starting character position in the paragraph.
     pub start_pos: u32,
@@ -129,7 +131,7 @@ pub struct CharRun {
 }
 
 /// Font face entry.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct FontFace {
     pub name: String,
     pub family: u8,
@@ -137,7 +139,7 @@ pub struct FontFace {
 }
 
 /// Border/fill style.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct BorderFill {
     pub id: u16,
     pub border_type_left: u8,
@@ -157,14 +159,14 @@ pub struct BorderFill {
 }
 
 /// Tab definition.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct TabDef {
     pub auto_tab_left: bool,
     pub auto_tab_right: bool,
     pub tab_items: Vec<TabItem>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct TabItem {
     pub position: u32,
     pub kind: u8,
@@ -172,12 +174,12 @@ pub struct TabItem {
 }
 
 /// Numbering definition.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Numbering {
     pub levels: Vec<NumberingLevel>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct NumberingLevel {
     pub format: String,
     pub number_type: u8,
@@ -185,14 +187,14 @@ pub struct NumberingLevel {
 }
 
 /// Bullet definition.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Bullet {
     pub char: char,
     pub image_bullet: bool,
 }
 
 /// Binary data descriptor.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct BinDataDef {
     pub storage_type: u16,
     pub abs_path: Option<String>,
@@ -202,8 +204,9 @@ pub struct BinDataDef {
 }
 
 /// Actual binary data entry (image bytes etc.).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BinEntry {
     pub name: String,
+    #[serde(skip_serializing)]
     pub data: Vec<u8>,
 }

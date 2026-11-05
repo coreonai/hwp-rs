@@ -1,7 +1,9 @@
+use serde::Serialize;
+
 use super::Paragraph;
 
 /// Table control.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Table {
     pub rows: u16,
     pub cols: u16,
@@ -14,7 +16,7 @@ pub struct Table {
 }
 
 /// A single cell in a table.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Cell {
     /// Column address (0-based).
     pub col_addr: u16,
