@@ -1,0 +1,18 @@
+[package]
+name = "hwp-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust parser for Hancom Office HWP5 (.hwp) and HWPX (.hwpx) documents"
+license = "MIT"
+
+[dependencies]
+cfb = "0.10"
+flate2 = "1"
+quick-xml = "0.36"
+zip = "2"
+thiserror = "2"
+byteorder = "1"
+encoding_rs = "0.8"
+
+[dev-dependencies]
+pretty_assertions = "1"
