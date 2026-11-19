@@ -15,9 +15,12 @@
 //! }
 //! ```
 
+pub mod editor_doc;
 pub mod error;
 pub mod hwp5;
 pub mod hwpx;
+pub mod hwpx_writer;
+pub mod markdown;
 pub mod model;
 
 pub use error::{HwpError, Result};

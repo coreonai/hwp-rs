@@ -187,18 +187,19 @@ pub fn apply_page_margin(pd: &mut PageDef, e: &BytesStart<'_>) {
 /// Parse a `<TABLE>` element.
 pub fn parse_table_element(e: &BytesStart<'_>) -> Table {
     let mut table = Table::default();
-    if let Some(v) = attr_parse::<u16>(e, b"Rows") {
-        table.rows = v;
-    }
-    if let Some(v) = attr_parse::<u16>(e, b"Cols") {
-        table.cols = v;
-    }
-    if let Some(v) = attr_parse::<u16>(e, b"CellSpacing") {
-        table.cell_spacing = v;
-    }
-    if let Some(v) = attr_parse::<u16>(e, b"BorderFillId") {
-        table.border_fill_id = v;
-    }
+    // Try both PascalCase (HWP5-style) and camelCase (HWPX-style) attribute names
+    table.rows = attr_parse::<u16>(e, b"rowCnt")
+        .or_else(|| attr_parse::<u16>(e, b"Rows"))
+        .unwrap_or(0);
+    table.cols = attr_parse::<u16>(e, b"colCnt")
+        .or_else(|| attr_parse::<u16>(e, b"Cols"))
+        .unwrap_or(0);
+    table.cell_spacing = attr_parse::<u16>(e, b"cellSpacing")
+        .or_else(|| attr_parse::<u16>(e, b"CellSpacing"))
+        .unwrap_or(0);
+    table.border_fill_id = attr_parse::<u16>(e, b"borderFillIDRef")
+        .or_else(|| attr_parse::<u16>(e, b"BorderFillId"))
+        .unwrap_or(0);
     table
 }
 

@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HWP Editor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Noto Sans KR", "Malgun Gothic", sans-serif;
+      background: #e8e8e8;
+      overflow-y: scroll;
+    }
+
+    /* ── Top toolbar ── */
+    #toolbar {
+      position: sticky; top: 0; z-index: 200;
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 16px;
+      background: #fff; border-bottom: 1px solid #d0d0d0;
+      flex-wrap: wrap;
+    }
+    #doc-title {
+      font-size: 14px; font-weight: 600; color: #333;
+      margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 200px;
+    }
+    .tb-sep { width: 1px; height: 24px; background: #d0d0d0; margin: 0 2px; }
+    .tb-btn {
+      border: 1px solid transparent; background: none; cursor: pointer;
+      padding: 4px 8px; border-radius: 4px; font-size: 14px; color: #333;
+      min-width: 28px; text-align: center; line-height: 1.4;
+    }
+    .tb-btn:hover { background: #f0f0f0; }
+    .tb-btn.active { background: #e0e8ff; border-color: #a0b8ff; }
+    .tb-select {
+      border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px;
+      font-size: 13px; background: #fff; cursor: pointer;
+    }
+    #save-btn {
+      padding: 6px 16px; background: #2563eb; color: #fff; border: none;
+      border-radius: 5px; font-size: 13px; cursor: pointer; font-weight: 500;
+    }
+    #save-btn:hover { background: #1d4ed8; }
+    #save-btn:disabled { background: #93c5fd; cursor: not-allowed; }
+    #status { font-size: 12px; color: #888; min-width: 80px; text-align: right; }
+    #status.success { color: #16a34a; }
+    #status.error { color: #dc2626; }
+
+    /* ── Page area ── */
+    #pages {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 24px 0 60px;
+    }
+    .hwp-page {
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      margin-bottom: 24px;
+      position: relative;
+      /* A4: 210mm x 297mm */
+      width: 210mm;
+      min-height: 297mm;
+    }
+    .hwp-page-content {
+      outline: none;
+      min-height: 100%;
+    }
+
+    /* ── Paragraph styles ── */
+    .hwp-para {
+      line-height: 1.6;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .hwp-para:empty::before {
+      content: "\200B"; /* zero-width space to keep height */
+    }
+    .hwp-run { /* inherit styles from inline style */ }
+
+    /* ── Table styles ── */
+    .hwp-table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 4px 0;
+    }
+    .hwp-table td, .hwp-table th {
+      border: 1px solid #999;
+      padding: 4px 8px;
+      vertical-align: middle;
+      min-width: 20px;
+      min-height: 20px;
+    }
+    .hwp-table td:focus, .hwp-table th:focus {
+      outline: 2px solid #2563eb;
+      outline-offset: -2px;
+    }
+
+    /* ── Image styles ── */
+    .hwp-image {
+      display: block;
+      max-width: 100%;
+      margin: 4px 0;
+    }
+
+    /* ── Equation styles ── */
+    .hwp-equation {
+      display: inline-block;
+      font-family: "Cambria Math", "STIX Two Math", serif;
+      font-style: italic;
+      padding: 2px 4px;
+      background: #f8f8f0;
+      border: 1px dashed #ccc;
+      border-radius: 3px;
+    }
+
+    @media print {
+      body { background: #fff; }
+      #toolbar { display: none; }
+      #pages { padding: 0; }
+      .hwp-page { box-shadow: none; margin: 0; page-break-after: always; }
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <span id="doc-title">HWP Editor</span>
+    <div class="tb-sep"></div>
+
+    <button class="tb-btn" id="btn-bold" title="Bold (Ctrl+B)"><b>B</b></button>
+    <button class="tb-btn" id="btn-italic" title="Italic (Ctrl+I)"><i>I</i></button>
+    <button class="tb-btn" id="btn-underline" title="Underline (Ctrl+U)"><u>U</u></button>
+    <button class="tb-btn" id="btn-strike" title="Strikethrough"><s>S</s></button>
+
+    <div class="tb-sep"></div>
+
+    <select class="tb-select" id="sel-fontsize" title="Font size">
+      <option value="8">8pt</option>
+      <option value="9">9pt</option>
+      <option value="10" selected>10pt</option>
+      <option value="11">11pt</option>
+      <option value="12">12pt</option>
+      <option value="14">14pt</option>
+      <option value="16">16pt</option>
+      <option value="18">18pt</option>
+      <option value="20">20pt</option>
+      <option value="24">24pt</option>
+      <option value="28">28pt</option>
+      <option value="36">36pt</option>
+    </select>
+
+    <div class="tb-sep"></div>
+
+    <button class="tb-btn" id="btn-align-left" title="Align left">&#9776;</button>
+    <button class="tb-btn" id="btn-align-center" title="Align center">&#9776;</button>
+    <button class="tb-btn" id="btn-align-right" title="Align right">&#9776;</button>
+    <button class="tb-btn" id="btn-align-justify" title="Justify">&#9776;</button>
+
+    <div class="tb-sep"></div>
+
+    <select class="tb-select" id="sel-heading" title="Heading level">
+      <option value="0">Normal</option>
+      <option value="1">Heading 1</option>
+      <option value="2">Heading 2</option>
+      <option value="3">Heading 3</option>
+      <option value="4">Heading 4</option>
+      <option value="5">Heading 5</option>
+    </select>
+
+    <div style="flex:1"></div>
+
+    <span id="status">Loading...</span>
+    <button id="save-btn" disabled>Save</button>
+  </div>
+
+  <div id="pages"></div>
+
+  <script>
+    // ── Globals ──
+    let editorDoc = null;
+    const HWP_UNIT_TO_MM = 25.4 / 7200;
+    const HWP_UNIT_TO_PT = 72.0 / 7200;
+
+    // ── Init ──
+    async function init() {
+      const status = document.getElementById('status');
+      try {
+        const res = await fetch('/api/document');
+        editorDoc = await res.json();
+        renderDocument(editorDoc);
+        status.textContent = 'Ready';
+        document.getElementById('save-btn').disabled = false;
+        if (editorDoc.title) {
+          document.getElementById('doc-title').textContent = editorDoc.title;
+          document.title = editorDoc.title + ' — HWP Editor';
+        }
+      } catch (e) {
+        status.textContent = 'Failed to load';
+        status.className = 'error';
+        console.error(e);
+      }
+    }
+
+    // ── Render ──
+    function renderDocument(doc) {
+      const pages = document.getElementById('pages');
+      pages.innerHTML = '';
+
+      const pd = doc.page_def;
+      const marginLeft = (pd.margin_left * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+      const marginRight = (pd.margin_right * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+      const marginTop = (pd.margin_top * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+      const marginBottom = (pd.margin_bottom * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+
+      // Create char shape map
+      const csMap = {};
+      for (const cs of doc.char_shapes) { csMap[cs.id] = cs; }
+      const psMap = {};
+      for (const ps of doc.para_shapes) { psMap[ps.id] = ps; }
+
+      for (const section of doc.sections) {
+        const page = document.createElement('div');
+        page.className = 'hwp-page';
+
+        const content = document.createElement('div');
+        content.className = 'hwp-page-content';
+        content.setAttribute('contenteditable', 'true');
+        content.style.padding = `${marginTop} ${marginRight} ${marginBottom} ${marginLeft}`;
+
+        for (const para of section.paragraphs) {
+          const el = renderParagraph(para, csMap, psMap, doc.images);
+          content.appendChild(el);
+        }
+
+        page.appendChild(content);
+        pages.appendChild(page);
+      }
+    }
+
+    function renderParagraph(para, csMap, psMap, images) {
+      const div = document.createElement('div');
+      div.className = 'hwp-para';
+      div.dataset.paraShapeId = para.para_shape_id;
+      div.dataset.styleId = para.style_id;
+
+      const ps = psMap[para.para_shape_id];
+      if (ps) {
+        div.style.textAlign = ps.align || 'left';
+        if (ps.margin_left > 0) div.style.marginLeft = (ps.margin_left * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+        if (ps.margin_right > 0) div.style.marginRight = (ps.margin_right * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+        if (ps.indent !== 0) div.style.textIndent = (ps.indent * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+        if (ps.space_before > 0) div.style.marginTop = (ps.space_before * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+        if (ps.space_after > 0) div.style.marginBottom = (ps.space_after * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+        if (ps.line_spacing > 0) div.style.lineHeight = (ps.line_spacing / 100).toFixed(2);
+
+        // Heading
+        if (ps.heading_type === 1 && ps.heading_level >= 0) {
+          const sizes = [24, 20, 17, 15, 13, 12];
+          const sz = sizes[Math.min(ps.heading_level, 5)];
+          div.style.fontSize = sz + 'pt';
+          div.style.fontWeight = 'bold';
+        }
+      }
+
+      // Render runs
+      for (const run of para.runs) {
+        const span = document.createElement('span');
+        span.className = 'hwp-run';
+        span.dataset.charShapeId = run.char_shape_id;
+        span.textContent = run.text;
+
+        const cs = csMap[run.char_shape_id];
+        if (cs) {
+          applyCharStyle(span, cs);
+        }
+        div.appendChild(span);
+      }
+
+      // Render controls
+      for (const ctrl of para.controls) {
+        switch (ctrl.type) {
+          case 'table':
+            div.appendChild(renderTable(ctrl, csMap, psMap, images));
+            break;
+          case 'picture':
+            div.appendChild(renderPicture(ctrl, images));
+            break;
+          case 'equation':
+            const eq = document.createElement('span');
+            eq.className = 'hwp-equation';
+            eq.textContent = ctrl.script;
+            eq.dataset.type = 'equation';
+            div.appendChild(eq);
+            break;
+          case 'page_break':
+            // Rendered as a visual separator
+            const hr = document.createElement('hr');
+            hr.style.border = 'none';
+            hr.style.borderTop = '2px dashed #ccc';
+            hr.style.margin = '12px 0';
+            div.appendChild(hr);
+            break;
+        }
+      }
+
+      // Empty paragraph placeholder
+      if (para.runs.length === 0 && para.controls.length === 0) {
+        div.innerHTML = '<br>';
+      }
+
+      return div;
+    }
+
+    function applyCharStyle(el, cs) {
+      if (cs.font_name) {
+        el.style.fontFamily = `"${cs.font_name}", "Noto Sans KR", "Malgun Gothic", sans-serif`;
+      }
+      if (cs.height_pt) {
+        el.style.fontSize = cs.height_pt + 'pt';
+      }
+      if (cs.bold) el.style.fontWeight = 'bold';
+      if (cs.italic) el.style.fontStyle = 'italic';
+      if (cs.underline) el.style.textDecoration = (el.style.textDecoration || '') + ' underline';
+      if (cs.strikeout) el.style.textDecoration = (el.style.textDecoration || '') + ' line-through';
+      if (cs.superscript) { el.style.verticalAlign = 'super'; el.style.fontSize = '0.7em'; }
+      if (cs.subscript) { el.style.verticalAlign = 'sub'; el.style.fontSize = '0.7em'; }
+      if (cs.text_color && cs.text_color !== '#000000') {
+        el.style.color = cs.text_color;
+      }
+    }
+
+    function renderTable(ctrl, csMap, psMap, images) {
+      const table = document.createElement('table');
+      table.className = 'hwp-table';
+      table.dataset.type = 'table';
+
+      // Infer rows/cols from cells if not provided
+      let rows = ctrl.rows || 0;
+      let cols = ctrl.cols || 0;
+      for (const cell of ctrl.cells) {
+        rows = Math.max(rows, cell.row + (cell.row_span || 1));
+        cols = Math.max(cols, cell.col + (cell.col_span || 1));
+      }
+      table.dataset.rows = rows;
+      table.dataset.cols = cols;
+
+      if (rows === 0 || cols === 0) {
+        // No grid structure — just render cells linearly
+        const tr = document.createElement('tr');
+        for (const cell of ctrl.cells) {
+          const td = document.createElement('td');
+          td.setAttribute('contenteditable', 'true');
+          for (const p of cell.paragraphs) {
+            td.appendChild(renderParagraph(p, csMap, psMap, images));
+          }
+          tr.appendChild(td);
+        }
+        table.appendChild(tr);
+        return table;
+      }
+
+      // Build grid
+      const grid = [];
+      for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(null);
+      const covered = [];
+      for (let r = 0; r < rows; r++) covered[r] = new Array(cols).fill(false);
+
+      for (const cell of ctrl.cells) {
+        if (cell.row < rows && cell.col < cols) {
+          grid[cell.row][cell.col] = cell;
+        }
+        for (let dr = 0; dr < (cell.row_span || 1); dr++) {
+          for (let dc = 0; dc < (cell.col_span || 1); dc++) {
+            if (dr === 0 && dc === 0) continue;
+            if (cell.row + dr < rows && cell.col + dc < cols) {
+              covered[cell.row + dr][cell.col + dc] = true;
+            }
+          }
+        }
+      }
+
+      for (let r = 0; r < rows; r++) {
+        const tr = document.createElement('tr');
+        for (let c = 0; c < cols; c++) {
+          if (covered[r][c]) continue;
+          const cell = grid[r][c];
+          const td = document.createElement('td');
+          td.setAttribute('contenteditable', 'true');
+
+          if (cell) {
+            if ((cell.col_span || 1) > 1) td.colSpan = cell.col_span;
+            if ((cell.row_span || 1) > 1) td.rowSpan = cell.row_span;
+            td.dataset.col = cell.col;
+            td.dataset.row = cell.row;
+
+            for (const p of cell.paragraphs) {
+              const pel = renderParagraph(p, csMap, psMap, images);
+              td.appendChild(pel);
+            }
+          }
+          tr.appendChild(td);
+        }
+        table.appendChild(tr);
+      }
+
+      return table;
+    }
+
+    function renderPicture(ctrl, images) {
+      const img = document.createElement('img');
+      img.className = 'hwp-image';
+      img.dataset.type = 'picture';
+      img.dataset.binDataId = ctrl.bin_data_id;
+
+      // Find image URL
+      const imgInfo = images.find(i => i.id === ctrl.bin_data_id);
+      img.src = imgInfo ? imgInfo.url : `/api/image/${ctrl.bin_data_id}`;
+
+      if (ctrl.width && ctrl.height) {
+        img.style.width = (ctrl.width * HWP_UNIT_TO_MM).toFixed(1) + 'mm';
+        img.style.height = (ctrl.height * HWP_UNIT_TO_MM).toFixed(1) + 'mm';
+      }
+      return img;
+    }
+
+    // ── Serialize DOM → EditorDoc ──
+    function serializeDocument() {
+      const doc = JSON.parse(JSON.stringify(editorDoc));
+      const pageContents = document.querySelectorAll('.hwp-page-content');
+
+      doc.sections = [];
+      for (const content of pageContents) {
+        const paras = [];
+        for (const div of content.querySelectorAll(':scope > .hwp-para')) {
+          paras.push(serializeParagraph(div));
+        }
+        doc.sections.push({ paragraphs: paras });
+      }
+      return doc;
+    }
+
+    function serializeParagraph(div) {
+      const paraShapeId = parseInt(div.dataset.paraShapeId || '0');
+      const styleId = parseInt(div.dataset.styleId || '0');
+      const runs = [];
+      const controls = [];
+
+      // Collect text runs
+      for (const child of div.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          if (child.textContent) {
+            runs.push({ text: child.textContent, char_shape_id: 0 });
+          }
+        } else if (child.classList && child.classList.contains('hwp-run')) {
+          const csId = parseInt(child.dataset.charShapeId || '0');
+          runs.push({ text: child.textContent, char_shape_id: csId });
+        } else if (child.classList && child.classList.contains('hwp-table')) {
+          controls.push(serializeTable(child));
+        } else if (child.classList && child.classList.contains('hwp-image')) {
+          controls.push({
+            type: 'picture',
+            bin_data_id: parseInt(child.dataset.binDataId || '0'),
+            width: parseInt(child.dataset.width || '0'),
+            height: parseInt(child.dataset.height || '0'),
+          });
+        } else if (child.classList && child.classList.contains('hwp-equation')) {
+          controls.push({ type: 'equation', script: child.textContent });
+        } else if (child.tagName === 'BR') {
+          // empty paragraph
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          // Fallback: extract text with formatting detection
+          const text = child.textContent;
+          if (text) {
+            const csId = parseInt(child.dataset?.charShapeId || '0');
+            runs.push({ text, char_shape_id: csId });
+          }
+        }
+      }
+
+      return { para_shape_id: paraShapeId, style_id: styleId, runs, controls };
+    }
+
+    function serializeTable(tableEl) {
+      const rows = parseInt(tableEl.dataset.rows || '0');
+      const cols = parseInt(tableEl.dataset.cols || '0');
+      const cells = [];
+
+      const trs = tableEl.querySelectorAll('tr');
+      for (let r = 0; r < trs.length; r++) {
+        const tds = trs[r].querySelectorAll('td, th');
+        for (const td of tds) {
+          const col = parseInt(td.dataset.col || '0');
+          const row = parseInt(td.dataset.row || r.toString());
+          const colSpan = td.colSpan || 1;
+          const rowSpan = td.rowSpan || 1;
+          const paragraphs = [];
+
+          for (const p of td.querySelectorAll('.hwp-para')) {
+            paragraphs.push(serializeParagraph(p));
+          }
+          if (paragraphs.length === 0) {
+            paragraphs.push({
+              para_shape_id: 0, style_id: 0,
+              runs: [{ text: td.textContent || '', char_shape_id: 0 }],
+              controls: [],
+            });
+          }
+
+          cells.push({ col, row, col_span: colSpan, row_span: rowSpan, width: 0, height: 0, paragraphs });
+        }
+      }
+
+      return { type: 'table', rows, cols, cells };
+    }
+
+    // ── Toolbar actions ──
+    function execFmt(cmd, val) {
+      document.execCommand(cmd, false, val || null);
+    }
+
+    document.getElementById('btn-bold').addEventListener('click', () => execFmt('bold'));
+    document.getElementById('btn-italic').addEventListener('click', () => execFmt('italic'));
+    document.getElementById('btn-underline').addEventListener('click', () => execFmt('underline'));
+    document.getElementById('btn-strike').addEventListener('click', () => execFmt('strikeThrough'));
+
+    document.getElementById('sel-fontsize').addEventListener('change', function() {
+      execFmt('fontSize', '7');
+      // Replace browser's font size with actual pt size
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        const spans = document.querySelectorAll('font[size="7"]');
+        for (const s of spans) {
+          const wrap = document.createElement('span');
+          wrap.style.fontSize = this.value + 'pt';
+          while (s.firstChild) wrap.appendChild(s.firstChild);
+          s.parentNode.replaceChild(wrap, s);
+        }
+      }
+    });
+
+    document.getElementById('btn-align-left').addEventListener('click', () => execFmt('justifyLeft'));
+    document.getElementById('btn-align-center').addEventListener('click', () => execFmt('justifyCenter'));
+    document.getElementById('btn-align-right').addEventListener('click', () => execFmt('justifyRight'));
+    document.getElementById('btn-align-justify').addEventListener('click', () => execFmt('justifyFull'));
+
+    document.getElementById('sel-heading').addEventListener('change', function() {
+      const level = parseInt(this.value);
+      if (level === 0) {
+        execFmt('formatBlock', '<div>');
+      } else {
+        execFmt('formatBlock', '<h' + level + '>');
+      }
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+        switch (e.key.toLowerCase()) {
+          case 'b': e.preventDefault(); execFmt('bold'); break;
+          case 'i': e.preventDefault(); execFmt('italic'); break;
+          case 'u': e.preventDefault(); execFmt('underline'); break;
+          case 's':
+            e.preventDefault();
+            document.getElementById('save-btn').click();
+            break;
+        }
+      }
+    });
+
+    // ── Save ──
+    document.getElementById('save-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('save-btn');
+      const status = document.getElementById('status');
+      btn.disabled = true;
+      status.textContent = 'Saving...';
+      status.className = '';
+
+      try {
+        const doc = serializeDocument();
+        const res = await fetch('/api/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ editor_doc: doc }),
+        });
+        const result = await res.json();
+        if (res.ok && !result.error) {
+          status.textContent = 'Saved: ' + result.path;
+          status.className = 'success';
+        } else {
+          status.textContent = result.error || 'Save failed';
+          status.className = 'error';
+        }
+      } catch (e) {
+        status.textContent = 'Save failed';
+        status.className = 'error';
+        console.error(e);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // ── Start ──
+    init();
+  </script>
+</body>
+</html>

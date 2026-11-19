@@ -71,6 +71,8 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
 
     // Table parsing state
     let mut table_stack: Vec<TableBuildState> = Vec::new();
+    // Position map from most recent PARA_TEXT (u16 stream index → text char index)
+    let mut current_pos_map: Option<Vec<u32>> = None;
 
     let mut i = 0;
     while i < records.len() {
@@ -87,17 +89,34 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
                     push_paragraph(&mut paragraphs, &mut table_stack, para);
                 }
                 current_para = Some(parse_para_header(&record.payload).unwrap_or_default());
+                current_pos_map = None;
             }
             TAG_PARA_TEXT => {
                 if let Some(ref mut para) = current_para {
-                    if let Ok(text) = parse_para_text(&record.payload) {
+                    if let Ok((text, map)) = parse_para_text(&record.payload) {
                         para.text = text;
+                        // Stash pos_map temporarily in char_count (will be used
+                        // when PARA_CHAR_SHAPE is processed below)
+                        // Store the map in a side channel
+                        current_pos_map = Some(map);
                     }
                 }
             }
             TAG_PARA_CHAR_SHAPE => {
                 if let Some(ref mut para) = current_para {
-                    if let Ok(runs) = parse_para_char_shape(&record.payload) {
+                    if let Ok(mut runs) = parse_para_char_shape(&record.payload) {
+                        // Remap start_pos from u16 stream indices to text char indices
+                        if let Some(ref map) = current_pos_map {
+                            for run in &mut runs {
+                                let pos = run.start_pos as usize;
+                                run.start_pos = if pos < map.len() {
+                                    map[pos]
+                                } else {
+                                    // Beyond stream end — clamp to text length
+                                    map.last().copied().unwrap_or(0)
+                                };
+                            }
+                        }
                         para.char_runs = runs;
                     }
                 }
@@ -239,60 +258,88 @@ fn parse_para_header(data: &[u8]) -> Result<Paragraph> {
 }
 
 /// Parse PARA_TEXT record: UTF-16LE text with special character codes.
-fn parse_para_text(data: &[u8]) -> Result<String> {
+///
+/// Returns `(text, pos_map)` where `pos_map[stream_index]` gives the character
+/// index in the output text. This mapping is needed because extended control
+/// characters occupy 8 positions in the stream but produce 0-1 output chars.
+fn parse_para_text(data: &[u8]) -> Result<(String, Vec<u32>)> {
     let mut text = String::new();
     let u16s: Vec<u16> = data
         .chunks_exact(2)
         .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
         .collect();
 
+    // pos_map[i] = index of the output char at u16 stream position i.
+    // For positions that don't produce output, it maps to the index of the
+    // next char that will be produced (i.e., current text.len()).
+    let mut pos_map: Vec<u32> = Vec::with_capacity(u16s.len());
+    let mut char_idx: u32 = 0;
+
     let mut i = 0;
     while i < u16s.len() {
         let ch = u16s[i];
+
+        // Record the mapping for position i before processing
+        pos_map.push(char_idx);
+
         match ch {
-            // Special characters
-            0x0000 => {} // NULL — skip
-            0x0001 => {
-                // Reserved
-                i += 7; // Skip 7 additional u16 values (extended control)
+            // 8-position extended controls: occupy 8 u16 slots (1 header + 7 data)
+            0x0001 | // Reserved
+            0x0003 | // Field begin
+            0x0004 | // Field end (also 8-position extended)
+            0x0008 | // Inline control anchor (table, picture, etc.)
+            0x000B | // Drawing object anchor
+            0x000C | // Reserved extended
+            0x0010 | // Footnote/endnote
+            0x0011 | // Auto number
+            0x0015   // Page/section/column break control
+            => {
+                // Fill pos_map for the 7 data positions
+                for _ in 0..7 {
+                    i += 1;
+                    if i < u16s.len() {
+                        pos_map.push(char_idx);
+                    }
+                }
             }
             0x0002 => {
-                text.push('\n'); // Section/column break
-                i += 7;
+                // Section/column definition — 8 positions, emit newline
+                text.push('\n');
+                char_idx += 1;
+                for _ in 0..7 {
+                    i += 1;
+                    if i < u16s.len() {
+                        pos_map.push(char_idx);
+                    }
+                }
             }
-            0x0003 => {
-                i += 7; // Field begin — skip extended chars
-            }
-            0x0004 => {} // Field end
-            0x0005..=0x0007 => {}
-            0x0008 => {
-                i += 7; // Inline control anchor — skip extended
-            }
-            0x0009 => text.push('\t'), // Tab
-            0x000A => text.push('\n'), // Line break
-            0x000B => {
-                i += 7; // Drawing object anchor
-            }
-            0x000C => {
-                i += 7; // Reserved extended
-            }
-            0x000D => {
-                // Paragraph end — don't add newline, it's paragraph boundary
-            }
-            0x0018 => text.push('-'),  // Hyphen
-            0x001E => text.push(' '),  // Non-breaking space
-            0x001F => text.push(' '),  // Fixed-width space
+            // Single-position controls that produce no output
+            0x0000 | // NULL
+            0x0005..=0x0007 |
+            0x000D | // Paragraph end
+            0x000E | 0x000F | // Reserved single-position
+            0x0012..=0x0014 | // Reserved single-position
+            0x0016 | 0x0017 | // Reserved single-position
+            0x0019..=0x001D   // Reserved single-position
+            => {}
+            // Single-position controls that produce output
+            0x0009 => { text.push('\t'); char_idx += 1; }
+            0x000A => { text.push('\n'); char_idx += 1; }
+            0x0018 => { text.push('-'); char_idx += 1; }  // Hyphen
+            0x001E => { text.push(' '); char_idx += 1; }  // Non-breaking space
+            0x001F => { text.push(' '); char_idx += 1; }  // Fixed-width space
             _ => {
                 // Regular character
                 if let Some(c) = char::from_u32(ch as u32) {
                     text.push(c);
+                    char_idx += 1;
                 }
             }
         }
         i += 1;
     }
 
-    Ok(text)
+    Ok((text, pos_map))
 }
 
 /// Parse PARA_CHAR_SHAPE record: array of (position_u32, charShapeID_u32) pairs.
@@ -364,8 +411,12 @@ mod tests {
     fn test_parse_para_text_simple() {
         // "AB" in UTF-16LE, followed by paragraph end (0x000D)
         let data = [0x41, 0x00, 0x42, 0x00, 0x0D, 0x00];
-        let text = parse_para_text(&data).unwrap();
+        let (text, pos_map) = parse_para_text(&data).unwrap();
         assert_eq!(text, "AB");
+        // pos_map: [0, 1, 2] — 'A' at 0, 'B' at 1, para-end maps to 2 (past end)
+        assert_eq!(pos_map[0], 0); // 'A'
+        assert_eq!(pos_map[1], 1); // 'B'
+        assert_eq!(pos_map[2], 2); // paragraph end
     }
 
     #[test]
@@ -374,7 +425,7 @@ mod tests {
         let data = [
             0x09, 0x00, 0x41, 0x00, 0x0A, 0x00, 0x42, 0x00, 0x0D, 0x00,
         ];
-        let text = parse_para_text(&data).unwrap();
+        let (text, _) = parse_para_text(&data).unwrap();
         assert_eq!(text, "\tA\nB");
     }
 
@@ -382,8 +433,26 @@ mod tests {
     fn test_parse_para_text_korean() {
         // "한글" (U+D55C U+AE00) + paragraph end
         let data = [0x5C, 0xD5, 0x00, 0xAE, 0x0D, 0x00];
-        let text = parse_para_text(&data).unwrap();
+        let (text, _) = parse_para_text(&data).unwrap();
         assert_eq!(text, "한글");
+    }
+
+    #[test]
+    fn test_parse_para_text_extended_control() {
+        // Field begin (0x0003) + 7 data u16s + 'A' + paragraph end
+        let mut data = Vec::new();
+        data.extend_from_slice(&0x0003u16.to_le_bytes()); // field begin
+        for _ in 0..7 {
+            data.extend_from_slice(&0x6C6Bu16.to_le_bytes()); // extended data (garbage)
+        }
+        data.extend_from_slice(&0x0041u16.to_le_bytes()); // 'A'
+        data.extend_from_slice(&0x000Du16.to_le_bytes()); // paragraph end
+
+        let (text, pos_map) = parse_para_text(&data).unwrap();
+        assert_eq!(text, "A"); // Only 'A', no garbage
+        // Position 0-7 are the 8-position field begin control
+        // Position 8 is 'A' → char index 0
+        assert_eq!(pos_map[8], 0);
     }
 
     #[test]

@@ -314,6 +314,46 @@ fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
                         // now inside a cell
                     }
 
+                    // Cell sub-elements: <hp:cellAddr>, <hp:cellSpan>, <hp:cellSz>
+                    b"cellAddr" => {
+                        if let Some(ref mut cell) = current_cell {
+                            if let Some(v) = attr_parse::<u16>(e, b"colAddr") {
+                                cell.col_addr = v;
+                            }
+                            if let Some(v) = attr_parse::<u16>(e, b"rowAddr") {
+                                cell.row_addr = v;
+                            }
+                        }
+                    }
+                    b"cellSpan" => {
+                        if let Some(ref mut cell) = current_cell {
+                            if let Some(v) = attr_parse::<u16>(e, b"colSpan") {
+                                cell.col_span = v;
+                            }
+                            if let Some(v) = attr_parse::<u16>(e, b"rowSpan") {
+                                cell.row_span = v;
+                            }
+                        }
+                    }
+                    b"cellSz" => {
+                        if let Some(ref mut cell) = current_cell {
+                            if let Some(v) = attr_parse::<u32>(e, b"width") {
+                                cell.width = v;
+                            }
+                            if let Some(v) = attr_parse::<u32>(e, b"height") {
+                                cell.height = v;
+                            }
+                        }
+                    }
+                    b"cellMargin" => {
+                        if let Some(ref mut cell) = current_cell {
+                            cell.padding[0] = attr_parse::<u16>(e, b"left").unwrap_or(0);
+                            cell.padding[1] = attr_parse::<u16>(e, b"right").unwrap_or(0);
+                            cell.padding[2] = attr_parse::<u16>(e, b"top").unwrap_or(0);
+                            cell.padding[3] = attr_parse::<u16>(e, b"bottom").unwrap_or(0);
+                        }
+                    }
+
                     _ => {}
                 }
             }
