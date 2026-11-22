@@ -6,6 +6,8 @@ pub mod record;
 
 use std::io::{Read, Seek};
 
+use flate2::read::DeflateDecoder;
+
 use crate::error::{HwpError, Result};
 use crate::model::{BinEntry, HwpDocument};
 
@@ -32,6 +34,10 @@ pub fn parse_hwp5<R: Read + Seek>(reader: R) -> Result<HwpDocument> {
 }
 
 /// Extract binary data entries (images, etc.) from BinData storage.
+///
+/// BinData streams are always raw-deflate compressed regardless of the
+/// FileHeader compressed flag, so we unconditionally attempt decompression
+/// and fall back to the raw bytes on failure (for already-uncompressed data).
 fn parse_bin_data<R: Read + Seek>(cfb: &mut cfb::CompoundFile<R>) -> Result<Vec<BinEntry>> {
     let mut entries = Vec::new();
 
@@ -49,8 +55,17 @@ fn parse_bin_data<R: Read + Seek>(cfb: &mut cfb::CompoundFile<R>) -> Result<Vec<
 
     for name in &bin_entries {
         if let Ok(mut stream) = cfb.open_stream(name) {
-            let mut data = Vec::new();
-            if stream.read_to_end(&mut data).is_ok() {
+            let mut raw = Vec::new();
+            if stream.read_to_end(&mut raw).is_ok() {
+                // Always attempt raw deflate decompression; fall back to raw bytes
+                let data = {
+                    let mut decoder = DeflateDecoder::new(&raw[..]);
+                    let mut decompressed = Vec::new();
+                    match decoder.read_to_end(&mut decompressed) {
+                        Ok(_) if !decompressed.is_empty() => decompressed,
+                        _ => raw,
+                    }
+                };
                 let entry_name = name
                     .strip_prefix("/BinData/")
                     .unwrap_or(name)

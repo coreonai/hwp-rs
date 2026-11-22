@@ -24,7 +24,7 @@ pub fn decompress_stream(data: &[u8]) -> Result<Vec<u8>> {
 
         let input = &data[in_before..];
         let status = decompressor
-            .decompress(input, &mut buf, FlushDecompress::Finish)
+            .decompress(input, &mut buf, FlushDecompress::None)
             .map_err(|e| HwpError::Decompress(format!("{e} (at input offset {in_before})")))?;
 
         let produced = decompressor.total_out() as usize - out_before;

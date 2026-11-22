@@ -4,6 +4,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 
 use crate::error::Result;
 use crate::model::control::Control;
+use crate::model::shape::ShapeObject;
 use crate::model::table::{Cell, Table};
 use crate::model::{
     CharRun, DocInfo, FileHeader, PageDef, Paragraph, Section,
@@ -23,10 +24,12 @@ const TAG_PARA_RANGE_TAG: u16 = 70;  // HWPTAG_PARA_RANGE_TAG
 const TAG_CTRL_HEADER: u16 = 71;     // HWPTAG_CTRL_HEADER
 const TAG_LIST_HEADER: u16 = 72;     // HWPTAG_LIST_HEADER
 const TAG_PAGE_DEF: u16 = 73;        // HWPTAG_PAGE_DEF
+const TAG_SHAPE_COMPONENT: u16 = 76; // HWPTAG_SHAPE_COMPONENT
 const TAG_TABLE: u16 = 78;           // HWPTAG_TABLE
 const TAG_CELL: u16 = 79;            // HWPTAG_CELL
+const TAG_SHAPE_COMPONENT_PICTURE: u16 = 85; // HWPTAG_BEGIN + 69
 #[allow(dead_code)]
-const TAG_SHAPE_PICTURE: u16 = 89;   // HWPTAG_SHAPE_COMPONENT_PICTURE
+const TAG_SHAPE_COMPONENT_PICTURE_ALT: u16 = 89; // HWPTAG_BEGIN + 73 (alternate)
 #[allow(dead_code)]
 const TAG_EQUATION: u16 = 92;        // HWPTAG_SHAPE_COMPONENT_EQUATION
 
@@ -71,6 +74,8 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
 
     // Table parsing state
     let mut table_stack: Vec<TableBuildState> = Vec::new();
+    // GSO (picture) parsing state
+    let mut gso_state: Option<GsoBuildState> = None;
     // Position map from most recent PARA_TEXT (u16 stream index → text char index)
     let mut current_pos_map: Option<Vec<u32>> = None;
 
@@ -122,6 +127,7 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
                 }
             }
             TAG_CTRL_HEADER => {
+                gso_state = None; // Reset GSO state on any new ctrl header
                 if let Some(ref mut para) = current_para {
                     if record.payload.len() >= 4 {
                         let ctrl_id = u32::from_le_bytes([
@@ -133,6 +139,26 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
                         // "tbl " = table control
                         if ctrl_id == u32::from_le_bytes(*b"tbl ") {
                             // Table detected — we'll collect it from TAG_TABLE
+                        } else if ctrl_id == u32::from_le_bytes(*b" osg") {
+                            // GSO (GeneralShapeObject) — picture, drawing, etc.
+                            // Width/height from CTRL_HEADER at bytes 16-23
+                            let width = if record.payload.len() >= 20 {
+                                u32::from_le_bytes([
+                                    record.payload[16], record.payload[17],
+                                    record.payload[18], record.payload[19],
+                                ])
+                            } else { 0 };
+                            let height = if record.payload.len() >= 24 {
+                                u32::from_le_bytes([
+                                    record.payload[20], record.payload[21],
+                                    record.payload[22], record.payload[23],
+                                ])
+                            } else { 0 };
+                            gso_state = Some(GsoBuildState {
+                                is_picture: false,
+                                width,
+                                height,
+                            });
                         } else {
                             para.controls.push(Control::Unknown {
                                 ctrl_id,
@@ -155,6 +181,48 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
                     if let Ok(cell) = parse_cell_record(&record.payload) {
                         tbs.table.cells.push(cell);
                         tbs.cells_collected += 1;
+                    }
+                }
+            }
+            TAG_SHAPE_COMPONENT => {
+                // Check if this is a picture shape component ("$pic" type)
+                if let Some(ref mut gso) = gso_state {
+                    if record.payload.len() >= 28 {
+                        // Shape type at bytes 0-3: "$pic" = [0x24, 0x70, 0x69, 0x63]
+                        let shape_type = u32::from_le_bytes([
+                            record.payload[0], record.payload[1],
+                            record.payload[2], record.payload[3],
+                        ]);
+                        // "cip$" bytes [0x63,0x69,0x70,0x24] as u32 LE = 0x24706963
+                        if shape_type == 0x24706963 {
+                            gso.is_picture = true;
+                            // Update width/height from shape component (bytes 20-27)
+                            gso.width = u32::from_le_bytes([
+                                record.payload[20], record.payload[21],
+                                record.payload[22], record.payload[23],
+                            ]);
+                            gso.height = u32::from_le_bytes([
+                                record.payload[24], record.payload[25],
+                                record.payload[26], record.payload[27],
+                            ]);
+                        }
+                    }
+                }
+            }
+            TAG_SHAPE_COMPONENT_PICTURE | TAG_SHAPE_COMPONENT_PICTURE_ALT => {
+                // Picture sub-record — extract bin_data_id
+                if let Some(ref gso) = gso_state {
+                    if gso.is_picture {
+                        if let Some(ref mut para) = current_para {
+                            if let Some(pic) = parse_picture_shape(
+                                &record.payload,
+                                gso.width,
+                                gso.height,
+                            ) {
+                                para.controls.push(Control::Picture(pic));
+                            }
+                        }
+                        gso_state = None;
                     }
                 }
             }
@@ -188,6 +256,13 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
 struct TableBuildState {
     table: Table,
     cells_collected: u32,
+}
+
+/// State for building a GSO (GeneralShapeObject) picture control.
+struct GsoBuildState {
+    is_picture: bool,
+    width: u32,
+    height: u32,
 }
 
 fn push_paragraph(
@@ -378,6 +453,50 @@ fn parse_table_record(data: &[u8]) -> Result<Table> {
         }
     }
     Ok(table)
+}
+
+/// Parse picture shape sub-record (tag 85 or 89) to extract bin_data_id and dimensions.
+///
+/// Binary layout (90 bytes typical):
+///   0-11:  border info (color, thickness, property)
+///  12-19:  reserved/flags
+///  20-43:  image rect and crop rect
+///  44-51:  reserved
+///  52-55:  original width (u32 LE)
+///  56-59:  original height (u32 LE)
+///  60-70:  additional flags
+///  71-72:  bin_data_id (u16 LE) — 1-based index into BinData
+fn parse_picture_shape(data: &[u8], width: u32, height: u32) -> Option<ShapeObject> {
+    if data.len() < 73 {
+        return None;
+    }
+
+    let bin_data_id = u16::from_le_bytes([data[71], data[72]]);
+    if bin_data_id == 0 {
+        return None;
+    }
+
+    let orig_width = if data.len() >= 56 {
+        u32::from_le_bytes([data[52], data[53], data[54], data[55]])
+    } else {
+        width
+    };
+    let orig_height = if data.len() >= 60 {
+        u32::from_le_bytes([data[56], data[57], data[58], data[59]])
+    } else {
+        height
+    };
+
+    Some(ShapeObject::Picture {
+        bin_data_id,
+        x: 0,
+        y: 0,
+        width,
+        height,
+        orig_width,
+        orig_height,
+        crop: [0; 4],
+    })
 }
 
 fn parse_cell_record(data: &[u8]) -> Result<Cell> {
