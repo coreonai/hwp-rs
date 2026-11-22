@@ -33,6 +33,8 @@
     }
     .tb-btn:hover { background: #f0f0f0; }
     .tb-btn.active { background: #e0e8ff; border-color: #a0b8ff; }
+    .tb-btn:disabled { color: #bbb; cursor: not-allowed; }
+    .tb-btn:disabled:hover { background: none; }
     .tb-select {
       border: 1px solid #ccc; border-radius: 4px; padding: 3px 6px;
       font-size: 13px; background: #fff; cursor: pointer;
@@ -59,11 +61,43 @@
       position: relative;
       /* A4: 210mm x 297mm */
       width: 210mm;
-      min-height: 297mm;
+      height: 297mm;
+      overflow: hidden;
     }
     .hwp-page-content {
       outline: none;
-      min-height: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+    /* ── Page number ── */
+    .hwp-page-number {
+      position: absolute;
+      bottom: 6mm;
+      left: 0; right: 0;
+      text-align: center;
+      font-size: 9pt;
+      color: #888;
+      pointer-events: none;
+      user-select: none;
+    }
+    /* ── Page break visual indicator (inline in content) ── */
+    .hwp-page-break-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+      pointer-events: none;
+    }
+    .hwp-page-break-indicator::before,
+    .hwp-page-break-indicator::after {
+      content: '';
+      flex: 1;
+      border-top: 2px dashed #bbb;
+    }
+    .hwp-page-break-indicator span {
+      font-size: 9pt;
+      color: #bbb;
+      white-space: nowrap;
     }
 
     /* ── Paragraph styles ── */
@@ -89,10 +123,53 @@
       vertical-align: middle;
       min-width: 20px;
       min-height: 20px;
+      cursor: default;
+      user-select: none;
     }
     .hwp-table td:focus, .hwp-table th:focus {
       outline: 2px solid #2563eb;
       outline-offset: -2px;
+    }
+    .hwp-table td.cell-editing, .hwp-table th.cell-editing {
+      outline: 2px solid #f59e0b;
+      outline-offset: -2px;
+      background: #fffdf0;
+      cursor: text;
+      user-select: text;
+    }
+    .hwp-table td.cell-selected, .hwp-table th.cell-selected {
+      background: #eff6ff;
+      outline: 1px solid #93c5fd;
+      outline-offset: -1px;
+    }
+
+    /* ── Context menu ── */
+    #ctx-menu {
+      position: fixed;
+      z-index: 1000;
+      background: #fff;
+      border: 1px solid #d0d0d0;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      padding: 4px 0;
+      min-width: 160px;
+      display: none;
+    }
+    #ctx-menu.visible { display: block; }
+    .ctx-item {
+      padding: 7px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #333;
+      white-space: nowrap;
+    }
+    .ctx-item:hover { background: #f0f0f0; }
+    .ctx-item.danger { color: #dc2626; }
+    .ctx-item.danger:hover { background: #fef2f2; }
+    .ctx-sep {
+      height: 1px;
+      background: #e5e5e5;
+      margin: 3px 0;
     }
 
     /* ── Image styles ── */
@@ -113,11 +190,146 @@
       border-radius: 3px;
     }
 
+    /* ── Virtual scroll placeholder ── */
+    .hwp-page-placeholder {
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      margin-bottom: 24px;
+      position: relative;
+      width: 210mm;
+    }
+    .hwp-page-placeholder::after {
+      content: '';
+      display: block;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 40px;
+      height: 40px;
+      border: 3px solid #e0e0e0;
+      border-top-color: #aaa;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+
+    /* ── Ruler ── */
+    #ruler-row {
+      display: flex;
+      position: sticky;
+      top: 0;
+      z-index: 150;
+    }
+    #ruler-corner {
+      width: 20px;
+      min-width: 20px;
+      height: 20px;
+      background: #ddd;
+      border-right: 1px solid #bbb;
+      border-bottom: 1px solid #bbb;
+      flex-shrink: 0;
+    }
+    #ruler-h {
+      flex: 1;
+      height: 20px;
+      background: #f5f5f5;
+      border-bottom: 1px solid #bbb;
+      position: relative;
+      overflow: hidden;
+      user-select: none;
+    }
+    #ruler-h canvas { position: absolute; top: 0; left: 0; }
+    #content-row { display: flex; }
+    #ruler-v-wrap {
+      width: 20px;
+      min-width: 20px;
+      position: relative;
+      flex-shrink: 0;
+    }
+    #ruler-v {
+      position: sticky;
+      top: 20px;
+      width: 20px;
+      background: #f5f5f5;
+      border-right: 1px solid #bbb;
+      overflow: hidden;
+      user-select: none;
+    }
+    #ruler-v canvas { position: absolute; top: 0; left: 0; display: block; }
+    #pages-wrapper { flex: 1; min-width: 0; }
+    .ruler-marker {
+      position: absolute;
+      top: 0;
+      width: 14px;
+      height: 20px;
+      margin-left: -7px;
+      cursor: ew-resize;
+      z-index: 10;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .ruler-marker::after {
+      content: '';
+      width: 0; height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-bottom: 8px solid #2563eb;
+      margin-bottom: 1px;
+    }
+    .ruler-marker:hover::after { border-bottom-color: #1d4ed8; }
+    .ruler-marker-v {
+      position: absolute;
+      left: 0;
+      width: 20px;
+      height: 14px;
+      margin-top: -7px;
+      cursor: ns-resize;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .ruler-marker-v::after {
+      content: '';
+      width: 0; height: 0;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+      border-left: 8px solid #2563eb;
+      margin-right: 1px;
+    }
+    .ruler-marker-v:hover::after { border-left-color: #1d4ed8; }
+
     @media print {
       body { background: #fff; }
       #toolbar { display: none; }
+      #ruler-row, #ruler-v-wrap { display: none; }
+      #ctx-menu { display: none !important; }
       #pages { padding: 0; }
-      .hwp-page { box-shadow: none; margin: 0; page-break-after: always; }
+      .hwp-page {
+        box-shadow: none;
+        margin: 0;
+        height: auto;
+        overflow: visible;
+        page-break-after: always;
+        break-after: page;
+      }
+      .hwp-page-content {
+        height: auto;
+        overflow: visible;
+      }
+      .hwp-page:last-child {
+        page-break-after: avoid;
+        break-after: avoid;
+      }
+      /* Force page break at explicit break indicators */
+      .hwp-page-break-indicator {
+        page-break-after: always;
+        break-after: page;
+      }
+      .hwp-page-number { display: none; }
     }
   </style>
 </head>
@@ -166,19 +378,282 @@
       <option value="5">Heading 5</option>
     </select>
 
+    <div class="tb-sep"></div>
+
+    <button class="tb-btn" id="btn-undo" title="Undo (Ctrl+Z)" disabled>&#8630;</button>
+    <button class="tb-btn" id="btn-redo" title="Redo (Ctrl+Y)" disabled>&#8631;</button>
+
     <div style="flex:1"></div>
 
     <span id="status">Loading...</span>
     <button id="save-btn" disabled>Save</button>
   </div>
 
-  <div id="pages"></div>
+  <!-- Horizontal ruler (sticky below toolbar) -->
+  <div id="ruler-row">
+    <div id="ruler-corner"></div>
+    <div id="ruler-h">
+      <canvas id="ruler-h-canvas"></canvas>
+    </div>
+  </div>
+
+  <!-- Content row: vertical ruler + pages -->
+  <div id="content-row">
+    <div id="ruler-v-wrap">
+      <div id="ruler-v">
+        <canvas id="ruler-v-canvas"></canvas>
+      </div>
+    </div>
+    <div id="pages-wrapper">
+      <div id="pages"></div>
+    </div>
+  </div>
+
+  <!-- Context menu for table cell operations -->
+  <div id="ctx-menu">
+    <div class="ctx-item" id="ctx-insert-row-above">행 위에 추가</div>
+    <div class="ctx-item" id="ctx-insert-row-below">행 아래에 추가</div>
+    <div class="ctx-item danger" id="ctx-delete-row">현재 행 삭제</div>
+    <div class="ctx-sep"></div>
+    <div class="ctx-item" id="ctx-insert-col-left">열 왼쪽에 추가</div>
+    <div class="ctx-item" id="ctx-insert-col-right">열 오른쪽에 추가</div>
+    <div class="ctx-item danger" id="ctx-delete-col">현재 열 삭제</div>
+  </div>
 
   <script>
     // ── Globals ──
     let editorDoc = null;
+
+    // ── Undo/Redo stacks ──
+    const MAX_SNAPSHOTS = 50;
+    let undoStack = [];
+    let redoStack = [];
+    let _snapshotPending = false;
+
+    function pushSnapshot() {
+      if (!editorDoc) return;
+      const snap = serializeDocument();
+      undoStack.push(JSON.stringify(snap));
+      if (undoStack.length > MAX_SNAPSHOTS) undoStack.shift();
+      redoStack = [];
+      updateUndoRedoBtns();
+    }
+
+    function updateUndoRedoBtns() {
+      const btnUndo = document.getElementById('btn-undo');
+      const btnRedo = document.getElementById('btn-redo');
+      if (btnUndo) btnUndo.disabled = undoStack.length === 0;
+      if (btnRedo) btnRedo.disabled = redoStack.length === 0;
+    }
+
+    function scheduleSnapshot() {
+      if (_snapshotPending) return;
+      _snapshotPending = true;
+      setTimeout(() => {
+        _snapshotPending = false;
+        pushSnapshot();
+      }, 500);
+    }
+
+    function undoAction() {
+      if (undoStack.length === 0) return;
+      const current = JSON.stringify(serializeDocument());
+      redoStack.push(current);
+      const prev = undoStack.pop();
+      editorDoc = JSON.parse(prev);
+      renderDocument(editorDoc);
+      updateUndoRedoBtns();
+    }
+
+    function redoAction() {
+      if (redoStack.length === 0) return;
+      const current = JSON.stringify(serializeDocument());
+      undoStack.push(current);
+      if (undoStack.length > MAX_SNAPSHOTS) undoStack.shift();
+      const next = redoStack.pop();
+      editorDoc = JSON.parse(next);
+      renderDocument(editorDoc);
+      updateUndoRedoBtns();
+    }
     const HWP_UNIT_TO_MM = 25.4 / 7200;
     const HWP_UNIT_TO_PT = 72.0 / 7200;
+
+    // ── Virtual scroll state ──
+    // sectionData[i] = { section, csMap, psMap, images } for each page
+    const sectionData = [];
+    // pageWrappers[i] = the outer wrapper div (placeholder or real page)
+    const pageWrappers = [];
+    // Set of indices whose pages are currently rendered as real DOM
+    const renderedPages = new Set();
+    // Index of the page being edited (always keep rendered)
+    let activePageIndex = -1;
+    // Page height estimate in px for placeholder sizing (297mm at 96dpi ≈ 1122px + 24px margin)
+    const PAGE_HEIGHT_PX = Math.round(297 * 96 / 25.4) + 24;
+    let vsObserver = null;
+
+
+    // ── Ruler state ──
+    const margins = { left: 30, right: 30, top: 20, bottom: 20 };
+    const PAGE_W_MM = 210;
+    const PAGE_H_MM = 297;
+    const PX_PER_MM = 96 / 25.4;
+
+    function mmToPx(mm) { return mm * PX_PER_MM; }
+
+    function initRulers() {
+      drawHorizontalRuler();
+      drawVerticalRuler();
+      setupMarginMarkers();
+      window.addEventListener('resize', () => { drawHorizontalRuler(); drawVerticalRuler(); setupMarginMarkers(); });
+    }
+
+    function drawHorizontalRuler() {
+      const rulerEl = document.getElementById('ruler-h');
+      const canvas = document.getElementById('ruler-h-canvas');
+      if (!rulerEl || !canvas) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = rulerEl.clientWidth;
+      const h = 20;
+      canvas.width  = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = h + 'px';
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#f5f5f5';
+      ctx.fillRect(0, 0, w, h);
+      const rulerRect = rulerEl.getBoundingClientRect();
+      const firstPage = document.querySelector('.hwp-page, .hwp-page-placeholder');
+      let pageOffsetX = (w - mmToPx(PAGE_W_MM)) / 2;
+      if (firstPage) {
+        pageOffsetX = firstPage.getBoundingClientRect().left - rulerRect.left;
+      }
+      ctx.strokeStyle = '#888';
+      ctx.fillStyle = '#555';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 1;
+      for (let mm = 0; mm <= PAGE_W_MM; mm++) {
+        const x = pageOffsetX + mmToPx(mm);
+        if (x < 0 || x > w) continue;
+        let tickH;
+        if (mm % 10 === 0) { tickH = 10; ctx.fillText(String(mm), x, h - 1); }
+        else if (mm % 5 === 0) { tickH = 7; }
+        else { tickH = 4; }
+        ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x, h - tickH); ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(200,200,200,0.4)';
+      ctx.fillRect(pageOffsetX, 0, mmToPx(margins.left), h);
+      ctx.fillRect(pageOffsetX + mmToPx(PAGE_W_MM - margins.right), 0, mmToPx(margins.right), h);
+    }
+
+    function drawVerticalRuler() {
+      const rulerVEl = document.getElementById('ruler-v');
+      const canvas = document.getElementById('ruler-v-canvas');
+      const pagesEl = document.getElementById('pages');
+      if (!rulerVEl || !canvas || !pagesEl) return;
+      const dpr = window.devicePixelRatio || 1;
+      const totalH = pagesEl.scrollHeight + 48;
+      const w = 20;
+      canvas.width  = w * dpr;
+      canvas.height = totalH * dpr;
+      canvas.style.width  = w + 'px';
+      canvas.style.height = totalH + 'px';
+      rulerVEl.style.height = totalH + 'px';
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, totalH);
+      ctx.fillStyle = '#f5f5f5';
+      ctx.fillRect(0, 0, w, totalH);
+      const contentRow = document.getElementById('content-row');
+      const contentRect = contentRow ? contentRow.getBoundingClientRect() : { top: 0 };
+      const pages = pagesEl.querySelectorAll('.hwp-page, .hwp-page-placeholder');
+      ctx.strokeStyle = '#888';
+      ctx.fillStyle = '#555';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 1;
+      pages.forEach((page) => {
+        const pageRect = page.getBoundingClientRect();
+        const pageTop = pageRect.top - contentRect.top + window.scrollY;
+        for (let mm = 0; mm <= PAGE_H_MM; mm++) {
+          const y = pageTop + mmToPx(mm);
+          if (y < 0 || y > totalH) continue;
+          let tickW;
+          if (mm % 10 === 0) {
+            tickW = 10;
+            ctx.save(); ctx.translate(w - 1, y); ctx.rotate(-Math.PI / 2);
+            ctx.fillText(String(mm), 0, 0); ctx.restore();
+          } else if (mm % 5 === 0) { tickW = 7; }
+          else { tickW = 4; }
+          ctx.beginPath(); ctx.moveTo(w, y); ctx.lineTo(w - tickW, y); ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(200,200,200,0.4)';
+        ctx.fillRect(0, pageTop, w, mmToPx(margins.top));
+        ctx.fillRect(0, pageTop + mmToPx(PAGE_H_MM - margins.bottom), w, mmToPx(margins.bottom));
+        ctx.fillStyle = '#555';
+      });
+    }
+
+    function setupMarginMarkers() {
+      const rulerH = document.getElementById('ruler-h');
+      const rulerV = document.getElementById('ruler-v');
+      if (!rulerH || !rulerV) return;
+      rulerH.querySelectorAll('.ruler-marker').forEach(m => m.remove());
+      rulerV.querySelectorAll('.ruler-marker-v').forEach(m => m.remove());
+      function getPageOffsetX() {
+        const firstPage = document.querySelector('.hwp-page, .hwp-page-placeholder');
+        if (!firstPage) return (rulerH.clientWidth - mmToPx(PAGE_W_MM)) / 2;
+        return firstPage.getBoundingClientRect().left - rulerH.getBoundingClientRect().left;
+      }
+      function getFirstPageTopInV() {
+        const firstPage = document.querySelector('.hwp-page, .hwp-page-placeholder');
+        const contentRow = document.getElementById('content-row');
+        if (!firstPage || !contentRow) return 0;
+        return firstPage.getBoundingClientRect().top - contentRow.getBoundingClientRect().top + window.scrollY;
+      }
+      function makeHMarker(getPosMm, onDrop) {
+        const m = document.createElement('div');
+        m.className = 'ruler-marker';
+        m.style.left = (getPageOffsetX() + mmToPx(getPosMm())) + 'px';
+        rulerH.appendChild(m);
+        let drag = false, startX = 0, startMm = 0, refOX = 0;
+        m.addEventListener('mousedown', e => { e.preventDefault(); drag = true; startX = e.clientX; startMm = getPosMm(); refOX = getPageOffsetX(); document.body.style.cursor = 'ew-resize'; });
+        document.addEventListener('mousemove', e => { if (!drag) return; m.style.left = (refOX + mmToPx(startMm + (e.clientX - startX) / PX_PER_MM)) + 'px'; });
+        document.addEventListener('mouseup', e => { if (!drag) return; drag = false; document.body.style.cursor = ''; onDrop(startMm + (e.clientX - startX) / PX_PER_MM); });
+      }
+      function makeVMarker(getPosMm, onDrop) {
+        const m = document.createElement('div');
+        m.className = 'ruler-marker-v';
+        m.style.top = (getFirstPageTopInV() + mmToPx(getPosMm())) + 'px';
+        rulerV.appendChild(m);
+        let drag = false, startY = 0, startMm = 0, refPT = 0;
+        m.addEventListener('mousedown', e => { e.preventDefault(); drag = true; startY = e.clientY; startMm = getPosMm(); refPT = getFirstPageTopInV(); document.body.style.cursor = 'ns-resize'; });
+        document.addEventListener('mousemove', e => { if (!drag) return; m.style.top = (refPT + mmToPx(startMm + (e.clientY - startY) / PX_PER_MM)) + 'px'; });
+        document.addEventListener('mouseup', e => { if (!drag) return; drag = false; document.body.style.cursor = ''; onDrop(startMm + (e.clientY - startY) / PX_PER_MM); });
+      }
+      makeHMarker(() => margins.left, mm => { margins.left = Math.max(5, Math.min(mm, PAGE_W_MM - margins.right - 20)); applyMarginsToPages(); drawHorizontalRuler(); setupMarginMarkers(); });
+      makeHMarker(() => PAGE_W_MM - margins.right, mm => { margins.right = Math.max(5, Math.min(PAGE_W_MM - mm, PAGE_W_MM - margins.left - 20)); applyMarginsToPages(); drawHorizontalRuler(); setupMarginMarkers(); });
+      makeVMarker(() => margins.top, mm => { margins.top = Math.max(5, Math.min(mm, PAGE_H_MM - margins.bottom - 20)); applyMarginsToPages(); drawVerticalRuler(); setupMarginMarkers(); });
+      makeVMarker(() => PAGE_H_MM - margins.bottom, mm => { margins.bottom = Math.max(5, Math.min(PAGE_H_MM - mm, PAGE_H_MM - margins.top - 20)); applyMarginsToPages(); drawVerticalRuler(); setupMarginMarkers(); });
+    }
+
+    function applyMarginsToPages() {
+      const ml = margins.left.toFixed(2) + 'mm';
+      const mr = margins.right.toFixed(2) + 'mm';
+      const mt = margins.top.toFixed(2) + 'mm';
+      const mb = margins.bottom.toFixed(2) + 'mm';
+      document.querySelectorAll('.hwp-page-content').forEach(el => {
+        el.style.padding = mt + ' ' + mr + ' ' + mb + ' ' + ml;
+      });
+      if (editorDoc && editorDoc.page_def) {
+        editorDoc.page_def.margin_left   = Math.round(margins.left   / HWP_UNIT_TO_MM);
+        editorDoc.page_def.margin_right  = Math.round(margins.right  / HWP_UNIT_TO_MM);
+        editorDoc.page_def.margin_top    = Math.round(margins.top    / HWP_UNIT_TO_MM);
+        editorDoc.page_def.margin_bottom = Math.round(margins.bottom / HWP_UNIT_TO_MM);
+      }
+    }
 
     // ── Init ──
     async function init() {
@@ -187,6 +662,14 @@
         const res = await fetch('/api/document');
         editorDoc = await res.json();
         renderDocument(editorDoc);
+        undoStack = []; redoStack = []; updateUndoRedoBtns();
+        // Update margins from page_def and init rulers
+        const pd2 = editorDoc.page_def;
+        margins.left   = pd2.margin_left   * HWP_UNIT_TO_MM;
+        margins.right  = pd2.margin_right  * HWP_UNIT_TO_MM;
+        margins.top    = pd2.margin_top    * HWP_UNIT_TO_MM;
+        margins.bottom = pd2.margin_bottom * HWP_UNIT_TO_MM;
+        requestAnimationFrame(() => initRulers());
         status.textContent = 'Ready';
         document.getElementById('save-btn').disabled = false;
         if (editorDoc.title) {
@@ -202,37 +685,164 @@
 
     // ── Render ──
     function renderDocument(doc) {
-      const pages = document.getElementById('pages');
-      pages.innerHTML = '';
+      const pagesEl = document.getElementById('pages');
+      pagesEl.innerHTML = '';
+      sectionData.length = 0;
+      pageWrappers.length = 0;
+      renderedPages.clear();
+      activePageIndex = -1;
 
       const pd = doc.page_def;
-      const marginLeft = (pd.margin_left * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
-      const marginRight = (pd.margin_right * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
-      const marginTop = (pd.margin_top * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
-      const marginBottom = (pd.margin_bottom * HWP_UNIT_TO_MM).toFixed(2) + 'mm';
+      const margin = {
+        marginLeft: (pd.margin_left * HWP_UNIT_TO_MM).toFixed(2) + 'mm',
+        marginRight: (pd.margin_right * HWP_UNIT_TO_MM).toFixed(2) + 'mm',
+        marginTop: (pd.margin_top * HWP_UNIT_TO_MM).toFixed(2) + 'mm',
+        marginBottom: (pd.margin_bottom * HWP_UNIT_TO_MM).toFixed(2) + 'mm',
+      };
 
-      // Create char shape map
+      // Build shared char/para shape maps once
       const csMap = {};
       for (const cs of doc.char_shapes) { csMap[cs.id] = cs; }
       const psMap = {};
       for (const ps of doc.para_shapes) { psMap[ps.id] = ps; }
 
+      // Split sections at explicit page breaks (page_break control or page_break_before para attr)
+      // Each resulting "virtual section" becomes one rendered page
+      const virtualSections = [];
       for (const section of doc.sections) {
-        const page = document.createElement('div');
-        page.className = 'hwp-page';
-
-        const content = document.createElement('div');
-        content.className = 'hwp-page-content';
-        content.setAttribute('contenteditable', 'true');
-        content.style.padding = `${marginTop} ${marginRight} ${marginBottom} ${marginLeft}`;
-
+        let currentParas = [];
         for (const para of section.paragraphs) {
-          const el = renderParagraph(para, csMap, psMap, doc.images);
-          content.appendChild(el);
-        }
+          const hasPageBreak = para.controls.some(c => c.type === 'page_break');
+          const ps = psMap[para.para_shape_id];
+          const hasBreakBefore = ps && ps.page_break_before;
 
-        page.appendChild(content);
-        pages.appendChild(page);
+          if ((hasPageBreak || hasBreakBefore) && currentParas.length > 0) {
+            virtualSections.push({ paragraphs: currentParas });
+            currentParas = [];
+          }
+
+          // Always add the paragraph (page_break visual is handled in renderParagraph)
+          currentParas.push(para);
+        }
+        if (currentParas.length > 0) {
+          virtualSections.push({ paragraphs: currentParas });
+        }
+      }
+
+      // Create wrapper divs for each virtual section (page)
+      for (let i = 0; i < virtualSections.length; i++) {
+        sectionData.push({ section: virtualSections[i], csMap, psMap, images: doc.images, margin });
+        const wrapper = document.createElement('div');
+        wrapper.dataset.pageIndex = i;
+        pageWrappers.push(wrapper);
+        pagesEl.appendChild(wrapper);
+      }
+
+      // Disconnect existing observer
+      if (vsObserver) vsObserver.disconnect();
+
+      // IntersectionObserver with 400px pre-load margin for smooth scrolling
+      vsObserver = new IntersectionObserver(onPageVisibilityChange, {
+        rootMargin: '400px 0px 400px 0px',
+        threshold: 0,
+      });
+
+      // Render first few pages eagerly; rest as lightweight placeholders
+      const INITIAL_RENDER = Math.min(3, sectionData.length);
+      for (let i = 0; i < sectionData.length; i++) {
+        if (i < INITIAL_RENDER) {
+          mountPage(i);
+        } else {
+          mountPlaceholder(i);
+        }
+        vsObserver.observe(pageWrappers[i]);
+      }
+    }
+
+    // Build and insert real page DOM for index i
+    function mountPage(i) {
+      if (renderedPages.has(i)) return;
+      const { section, csMap, psMap, images, margin } = sectionData[i];
+      const { marginLeft, marginRight, marginTop, marginBottom } = margin;
+
+      const page = document.createElement('div');
+      page.className = 'hwp-page';
+      page.dataset.pageIndex = i;
+
+      const content = document.createElement('div');
+      content.className = 'hwp-page-content';
+      content.setAttribute('contenteditable', 'true');
+      content.style.padding = `${marginTop} ${marginRight} ${marginBottom} ${marginLeft}`;
+
+      for (const para of section.paragraphs) {
+        content.appendChild(renderParagraph(para, csMap, psMap, images));
+      }
+
+      // Track focus → keep this page rendered while editing
+      content.addEventListener('focus', () => { activePageIndex = i; }, true);
+      content.addEventListener('blur', () => {
+        if (activePageIndex === i) activePageIndex = -1;
+      }, true);
+
+      // Page number indicator
+      const numEl = document.createElement('div');
+      numEl.className = 'hwp-page-number';
+      numEl.textContent = i + 1;
+
+      page.appendChild(content);
+      page.appendChild(numEl);
+
+      const wrapper = pageWrappers[i];
+      // Preserve wrapper height during swap to avoid scroll position jump
+      const prevHeight = wrapper.offsetHeight;
+      wrapper.innerHTML = '';
+      if (prevHeight > 0) wrapper.style.minHeight = prevHeight + 'px';
+      wrapper.appendChild(page);
+      wrapper.style.minHeight = '';
+
+      renderedPages.add(i);
+    }
+
+    // Replace page i DOM with a lightweight placeholder that holds its height
+    function unmountPage(i) {
+      if (!renderedPages.has(i)) return;
+      if (i === activePageIndex) return; // keep the page being edited
+
+      const wrapper = pageWrappers[i];
+      const realPage = wrapper.querySelector('.hwp-page');
+      const h = realPage ? realPage.offsetHeight : PAGE_HEIGHT_PX;
+
+      const ph = document.createElement('div');
+      ph.className = 'hwp-page-placeholder';
+      ph.style.height = h + 'px';
+      ph.style.minHeight = h + 'px';
+
+      wrapper.innerHTML = '';
+      wrapper.appendChild(ph);
+      renderedPages.delete(i);
+    }
+
+    // Create initial placeholder for a page not yet needed
+    function mountPlaceholder(i) {
+      const ph = document.createElement('div');
+      ph.className = 'hwp-page-placeholder';
+      ph.style.height = PAGE_HEIGHT_PX + 'px';
+      ph.style.minHeight = PAGE_HEIGHT_PX + 'px';
+      pageWrappers[i].innerHTML = '';
+      pageWrappers[i].appendChild(ph);
+    }
+
+    // IntersectionObserver callback: mount/unmount pages as they enter/leave viewport
+    function onPageVisibilityChange(entries) {
+      for (const entry of entries) {
+        const wrapper = entry.target;
+        const i = parseInt(wrapper.dataset.pageIndex);
+        if (isNaN(i)) continue;
+        if (entry.isIntersecting) {
+          mountPage(i);
+        } else {
+          unmountPage(i);
+        }
       }
     }
 
@@ -291,14 +901,14 @@
             eq.dataset.type = 'equation';
             div.appendChild(eq);
             break;
-          case 'page_break':
-            // Rendered as a visual separator
-            const hr = document.createElement('hr');
-            hr.style.border = 'none';
-            hr.style.borderTop = '2px dashed #ccc';
-            hr.style.margin = '12px 0';
-            div.appendChild(hr);
+          case 'page_break': {
+            // Visual separator for explicit page break control
+            const indicator = document.createElement('div');
+            indicator.className = 'hwp-page-break-indicator';
+            indicator.innerHTML = '<span>페이지 나눔</span>';
+            div.appendChild(indicator);
             break;
+          }
         }
       }
 
@@ -348,7 +958,7 @@
         const tr = document.createElement('tr');
         for (const cell of ctrl.cells) {
           const td = document.createElement('td');
-          td.setAttribute('contenteditable', 'true');
+          td.setAttribute('contenteditable', 'false');
           for (const p of cell.paragraphs) {
             td.appendChild(renderParagraph(p, csMap, psMap, images));
           }
@@ -384,7 +994,7 @@
           if (covered[r][c]) continue;
           const cell = grid[r][c];
           const td = document.createElement('td');
-          td.setAttribute('contenteditable', 'true');
+          td.setAttribute('contenteditable', 'false');
 
           if (cell) {
             if ((cell.col_span || 1) > 1) td.colSpan = cell.col_span;
@@ -425,15 +1035,36 @@
     // ── Serialize DOM → EditorDoc ──
     function serializeDocument() {
       const doc = JSON.parse(JSON.stringify(editorDoc));
-      const pageContents = document.querySelectorAll('.hwp-page-content');
 
-      doc.sections = [];
-      for (const content of pageContents) {
-        const paras = [];
-        for (const div of content.querySelectorAll(':scope > .hwp-para')) {
-          paras.push(serializeParagraph(div));
+      // Virtual scroll: serialize rendered pages from DOM; fall back to sectionData for unmounted pages
+      if (sectionData.length > 0) {
+        doc.sections = [];
+        for (let i = 0; i < sectionData.length; i++) {
+          const wrapper = pageWrappers[i];
+          const content = wrapper ? wrapper.querySelector('.hwp-page-content') : null;
+          if (content) {
+            const paras = [];
+            for (const div of content.querySelectorAll(':scope > .hwp-para')) {
+              paras.push(serializeParagraph(div));
+            }
+            doc.sections.push({ paragraphs: paras });
+            // Update in-memory section data with edited content
+            sectionData[i].section.paragraphs = doc.sections[i].paragraphs;
+          } else {
+            // Page not currently rendered — use the stored section data unchanged
+            doc.sections.push(sectionData[i].section);
+          }
         }
-        doc.sections.push({ paragraphs: paras });
+      } else {
+        const pageContents = document.querySelectorAll('.hwp-page-content');
+        doc.sections = [];
+        for (const content of pageContents) {
+          const paras = [];
+          for (const div of content.querySelectorAll(':scope > .hwp-para')) {
+            paras.push(serializeParagraph(div));
+          }
+          doc.sections.push({ paragraphs: paras });
+        }
       }
       return doc;
     }
@@ -512,15 +1143,262 @@
       return { type: 'table', rows, cols, cells };
     }
 
+    // ── Table cell editing ──
+    let activeCell = null;    // currently selected/editing cell
+    let ctxTargetCell = null; // cell for context menu actions
+
+    // Double-click: enter edit mode
+    document.getElementById('pages').addEventListener('dblclick', function(e) {
+      const td = e.target.closest('td, th');
+      if (!td || !td.closest('.hwp-table')) return;
+      enterCellEditMode(td);
+    });
+
+    // Single click: select cell (not editing)
+    document.getElementById('pages').addEventListener('click', function(e) {
+      const td = e.target.closest('td, th');
+      if (!td || !td.closest('.hwp-table')) {
+        if (activeCell && activeCell.classList.contains('cell-editing')) {
+          exitCellEditMode(activeCell);
+        } else if (activeCell) {
+          activeCell.classList.remove('cell-selected');
+          activeCell = null;
+        }
+        return;
+      }
+      if (td !== activeCell) {
+        if (activeCell) {
+          if (activeCell.classList.contains('cell-editing')) exitCellEditMode(activeCell);
+          else { activeCell.classList.remove('cell-selected'); activeCell = null; }
+        }
+        selectCell(td);
+      }
+    });
+
+    function selectCell(td) {
+      if (activeCell && activeCell !== td) {
+        activeCell.classList.remove('cell-selected', 'cell-editing');
+        activeCell.setAttribute('contenteditable', 'false');
+      }
+      activeCell = td;
+      td.classList.add('cell-selected');
+    }
+
+    function enterCellEditMode(td) {
+      if (activeCell && activeCell !== td) {
+        activeCell.classList.remove('cell-selected', 'cell-editing');
+        activeCell.setAttribute('contenteditable', 'false');
+      }
+      activeCell = td;
+      td.classList.remove('cell-selected');
+      td.classList.add('cell-editing');
+      td.setAttribute('contenteditable', 'true');
+      td.focus();
+      // Place cursor at end
+      const range = document.createRange();
+      range.selectNodeContents(td);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+
+    function exitCellEditMode(td) {
+      td.classList.remove('cell-editing', 'cell-selected');
+      td.setAttribute('contenteditable', 'false');
+      if (activeCell === td) activeCell = null;
+    }
+
+    // Escape key exits edit mode
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && activeCell) {
+        exitCellEditMode(activeCell);
+      }
+    }, true);
+
+    // ── Context menu ──
+    const ctxMenu = document.getElementById('ctx-menu');
+
+    document.getElementById('pages').addEventListener('contextmenu', function(e) {
+      const td = e.target.closest('td, th');
+      if (!td || !td.closest('.hwp-table')) return;
+      e.preventDefault();
+      ctxTargetCell = td;
+      if (!td.classList.contains('cell-editing')) selectCell(td);
+      showContextMenu(e.clientX, e.clientY);
+    });
+
+    function showContextMenu(x, y) {
+      ctxMenu.classList.add('visible');
+      const menuW = 180;
+      const menuH = 200;
+      const left = Math.min(x, window.innerWidth - menuW - 8);
+      const top = Math.min(y, window.innerHeight - menuH - 8);
+      ctxMenu.style.left = left + 'px';
+      ctxMenu.style.top = top + 'px';
+    }
+
+    function hideContextMenu() {
+      ctxMenu.classList.remove('visible');
+    }
+
+    document.addEventListener('click', function(e) {
+      if (!ctxMenu.contains(e.target)) hideContextMenu();
+    });
+
+    // ── Row/Column operations ──
+    function getColIndex(td) {
+      const tr = td.closest('tr');
+      let col = 0;
+      for (const cell of tr.cells) {
+        if (cell === td) break;
+        col += cell.colSpan || 1;
+      }
+      return col;
+    }
+
+    function insertTableRow(table, atIndex) {
+      const cols = parseInt(table.dataset.cols || '0') ||
+        (table.rows[0] ? Array.from(table.rows[0].cells).reduce((s, c) => s + (c.colSpan || 1), 0) : 1);
+      const tr = document.createElement('tr');
+      for (let c = 0; c < cols; c++) {
+        const td = document.createElement('td');
+        td.setAttribute('contenteditable', 'false');
+        td.dataset.row = atIndex;
+        td.dataset.col = c;
+        const p = document.createElement('div');
+        p.className = 'hwp-para';
+        p.innerHTML = '<br>';
+        td.appendChild(p);
+        tr.appendChild(td);
+      }
+      const tbody = table.tBodies[0] || table;
+      if (atIndex >= tbody.rows.length) {
+        tbody.appendChild(tr);
+      } else {
+        tbody.insertBefore(tr, tbody.rows[atIndex]);
+      }
+      table.dataset.rows = parseInt(table.dataset.rows || '0') + 1;
+      rebuildCellDataAttributes(table);
+    }
+
+    function deleteTableRow(table, rowIndex) {
+      if (table.rows.length <= 1) return;
+      if (rowIndex < table.rows.length) {
+        table.deleteRow(rowIndex);
+        table.dataset.rows = Math.max(0, parseInt(table.dataset.rows || '0') - 1);
+        rebuildCellDataAttributes(table);
+      }
+    }
+
+    function insertTableCol(table, atColIndex) {
+      for (let r = 0; r < table.rows.length; r++) {
+        const tr = table.rows[r];
+        const td = document.createElement('td');
+        td.setAttribute('contenteditable', 'false');
+        td.dataset.row = r;
+        td.dataset.col = atColIndex;
+        const p = document.createElement('div');
+        p.className = 'hwp-para';
+        p.innerHTML = '<br>';
+        td.appendChild(p);
+        if (atColIndex >= tr.cells.length) {
+          tr.appendChild(td);
+        } else {
+          tr.insertBefore(td, tr.cells[atColIndex]);
+        }
+      }
+      table.dataset.cols = parseInt(table.dataset.cols || '0') + 1;
+      rebuildCellDataAttributes(table);
+    }
+
+    function deleteTableCol(table, colIndex) {
+      const totalCols = parseInt(table.dataset.cols || '0') ||
+        (table.rows[0] ? table.rows[0].cells.length : 1);
+      if (totalCols <= 1) return;
+      for (let r = 0; r < table.rows.length; r++) {
+        const tr = table.rows[r];
+        if (colIndex < tr.cells.length) tr.deleteCell(colIndex);
+      }
+      table.dataset.cols = Math.max(0, parseInt(table.dataset.cols || '0') - 1);
+      rebuildCellDataAttributes(table);
+    }
+
+    function rebuildCellDataAttributes(table) {
+      for (let r = 0; r < table.rows.length; r++) {
+        let c = 0;
+        for (const td of table.rows[r].cells) {
+          td.dataset.row = r;
+          td.dataset.col = c;
+          c += td.colSpan || 1;
+        }
+      }
+    }
+
+    // Context menu actions
+    document.getElementById('ctx-insert-row-above').addEventListener('click', function() {
+      if (!ctxTargetCell) return;
+      const table = ctxTargetCell.closest('.hwp-table');
+      insertTableRow(table, ctxTargetCell.closest('tr').rowIndex);
+      hideContextMenu();
+    });
+
+    document.getElementById('ctx-insert-row-below').addEventListener('click', function() {
+      if (!ctxTargetCell) return;
+      const table = ctxTargetCell.closest('.hwp-table');
+      insertTableRow(table, ctxTargetCell.closest('tr').rowIndex + 1);
+      hideContextMenu();
+    });
+
+    document.getElementById('ctx-delete-row').addEventListener('click', function() {
+      if (!ctxTargetCell) return;
+      const table = ctxTargetCell.closest('.hwp-table');
+      const rowIndex = ctxTargetCell.closest('tr').rowIndex;
+      if (activeCell && activeCell.closest('tr') === ctxTargetCell.closest('tr')) {
+        activeCell = null;
+      }
+      deleteTableRow(table, rowIndex);
+      hideContextMenu();
+    });
+
+    document.getElementById('ctx-insert-col-left').addEventListener('click', function() {
+      if (!ctxTargetCell) return;
+      const table = ctxTargetCell.closest('.hwp-table');
+      insertTableCol(table, getColIndex(ctxTargetCell));
+      hideContextMenu();
+    });
+
+    document.getElementById('ctx-insert-col-right').addEventListener('click', function() {
+      if (!ctxTargetCell) return;
+      const table = ctxTargetCell.closest('.hwp-table');
+      insertTableCol(table, getColIndex(ctxTargetCell) + 1);
+      hideContextMenu();
+    });
+
+    document.getElementById('ctx-delete-col').addEventListener('click', function() {
+      if (!ctxTargetCell) return;
+      const table = ctxTargetCell.closest('.hwp-table');
+      deleteTableCol(table, getColIndex(ctxTargetCell));
+      hideContextMenu();
+    });
+
+    // ── Track content edits for undo ──
+    document.addEventListener('input', function(e) {
+      const target = e.target;
+      if (target.classList && (target.classList.contains('hwp-page-content') || target.closest('.hwp-page-content'))) {
+        scheduleSnapshot();
+      }
+    }, true);
+
     // ── Toolbar actions ──
     function execFmt(cmd, val) {
       document.execCommand(cmd, false, val || null);
     }
 
-    document.getElementById('btn-bold').addEventListener('click', () => execFmt('bold'));
-    document.getElementById('btn-italic').addEventListener('click', () => execFmt('italic'));
-    document.getElementById('btn-underline').addEventListener('click', () => execFmt('underline'));
-    document.getElementById('btn-strike').addEventListener('click', () => execFmt('strikeThrough'));
+    document.getElementById('btn-bold').addEventListener('click', () => { execFmt('bold'); pushSnapshot(); });
+    document.getElementById('btn-italic').addEventListener('click', () => { execFmt('italic'); pushSnapshot(); });
+    document.getElementById('btn-underline').addEventListener('click', () => { execFmt('underline'); pushSnapshot(); });
+    document.getElementById('btn-strike').addEventListener('click', () => { execFmt('strikeThrough'); pushSnapshot(); });
 
     document.getElementById('sel-fontsize').addEventListener('change', function() {
       execFmt('fontSize', '7');
@@ -553,11 +1431,18 @@
 
     // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault(); undoAction(); return;
+      }
+      if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+        e.preventDefault(); redoAction(); return;
+      }
+      if (mod && !e.shiftKey) {
         switch (e.key.toLowerCase()) {
-          case 'b': e.preventDefault(); execFmt('bold'); break;
-          case 'i': e.preventDefault(); execFmt('italic'); break;
-          case 'u': e.preventDefault(); execFmt('underline'); break;
+          case 'b': e.preventDefault(); execFmt('bold'); pushSnapshot(); break;
+          case 'i': e.preventDefault(); execFmt('italic'); pushSnapshot(); break;
+          case 'u': e.preventDefault(); execFmt('underline'); pushSnapshot(); break;
           case 's':
             e.preventDefault();
             document.getElementById('save-btn').click();
@@ -565,6 +1450,9 @@
         }
       }
     });
+
+    document.getElementById('btn-undo').addEventListener('click', undoAction);
+    document.getElementById('btn-redo').addEventListener('click', redoAction);
 
     // ── Save ──
     document.getElementById('save-btn').addEventListener('click', async () => {
@@ -595,6 +1483,116 @@
         console.error(e);
       } finally {
         btn.disabled = false;
+      }
+    });
+
+    // ── Image Upload (drag-and-drop + clipboard paste) ──
+
+    async function uploadImageFile(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+
+      const status = document.getElementById('status');
+      status.textContent = 'Uploading image...';
+      status.className = '';
+
+      try {
+        const formData = new FormData();
+        formData.append('image', file, file.name || 'image.png');
+
+        const res = await fetch('/api/image', { method: 'POST', body: formData });
+        const result = await res.json();
+
+        if (!res.ok || result.error) {
+          status.textContent = result.error || 'Image upload failed';
+          status.className = 'error';
+          return;
+        }
+
+        // Insert img element at current caret position
+        const sel = window.getSelection();
+        let insertTarget = null;
+        if (sel && sel.rangeCount > 0) {
+          let node = sel.getRangeAt(0).commonAncestorContainer;
+          if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+          while (node && !node.classList?.contains('hwp-page-content')) {
+            node = node.parentElement;
+          }
+          if (node) insertTarget = node;
+        }
+
+        // Fall back to last page content
+        if (!insertTarget) {
+          const contents = document.querySelectorAll('.hwp-page-content');
+          insertTarget = contents[contents.length - 1] || null;
+        }
+
+        if (!insertTarget) {
+          status.textContent = 'No editor target found';
+          status.className = 'error';
+          return;
+        }
+
+        const ctrl = { bin_data_id: result.bin_data_id, width: 0, height: 0 };
+        const imgEl = renderPicture(ctrl, editorDoc ? (editorDoc.images || []) : []);
+
+        const para = document.createElement('div');
+        para.className = 'hwp-para';
+        para.dataset.paraShapeId = '0';
+        para.dataset.styleId = '0';
+        para.appendChild(imgEl);
+
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          range.collapse(false);
+          range.insertNode(para);
+          range.setStartAfter(para);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } else {
+          insertTarget.appendChild(para);
+        }
+
+        status.textContent = 'Image inserted';
+        status.className = 'success';
+      } catch (e) {
+        status.textContent = 'Image upload failed';
+        status.className = 'error';
+        console.error(e);
+      }
+    }
+
+    // Drag-and-drop handlers on the pages container
+    const pagesContainer = document.getElementById('pages');
+
+    pagesContainer.addEventListener('dragover', function(e) {
+      if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    });
+
+    pagesContainer.addEventListener('drop', function(e) {
+      const files = e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+      if (imageFiles.length === 0) return;
+      e.preventDefault();
+      for (const file of imageFiles) {
+        uploadImageFile(file);
+      }
+    });
+
+    // Clipboard paste handler (Ctrl+V with image data)
+    document.addEventListener('paste', function(e) {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      const imageItems = Array.from(items).filter(it => it.type.startsWith('image/'));
+      if (imageItems.length === 0) return;
+      e.preventDefault();
+      for (const item of imageItems) {
+        const file = item.getAsFile();
+        if (file) uploadImageFile(file);
       }
     });
 

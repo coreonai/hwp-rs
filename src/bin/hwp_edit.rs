@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Multipart, Path, State},
     http::{header, StatusCode},
     response::{Html, IntoResponse, Json},
     routing::{get, post},
@@ -60,6 +60,7 @@ async fn main() {
         .route("/", get(index_handler))
         .route("/api/document", get(document_handler))
         .route("/api/image/{id}", get(image_handler))
+        .route("/api/image", post(image_upload_handler))
         .route("/api/save", post(save_handler))
         .with_state(state);
 
@@ -105,6 +106,73 @@ async fn image_handler(
         drop(doc);
         (StatusCode::NOT_FOUND, "Image not found").into_response()
     }
+}
+
+#[derive(Serialize)]
+struct ImageUploadResponse {
+    bin_data_id: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn image_upload_handler(
+    State(state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let mut file_data: Option<(String, Vec<u8>)> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "image" || file_data.is_none() {
+            let filename = field
+                .file_name()
+                .unwrap_or("image.png")
+                .to_string();
+            match field.bytes().await {
+                Ok(bytes) => {
+                    file_data = Some((filename, bytes.to_vec()));
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(ImageUploadResponse {
+                            bin_data_id: 0,
+                            error: Some(format!("Failed to read field: {}", e)),
+                        }),
+                    );
+                }
+            }
+        }
+    }
+
+    let (filename, data) = match file_data {
+        Some(fd) => fd,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ImageUploadResponse {
+                    bin_data_id: 0,
+                    error: Some("No image field found in multipart body".to_string()),
+                }),
+            );
+        }
+    };
+
+    let mut doc = state.document.lock().unwrap();
+    let new_id = (doc.bin_data.len() + 1) as u16;
+    doc.bin_data.push(hwp_rs::model::BinEntry {
+        name: filename,
+        data,
+    });
+    drop(doc);
+
+    (
+        StatusCode::OK,
+        Json(ImageUploadResponse {
+            bin_data_id: new_id,
+            error: None,
+        }),
+    )
 }
 
 #[derive(Deserialize)]
