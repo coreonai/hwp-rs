@@ -6,10 +6,13 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 
 use crate::error::{HwpError, Result};
+use crate::model::charshape::CharShape;
 use crate::model::control::Control;
+use crate::model::parashape::{Alignment, ParaShape, SpacingType};
+use crate::model::style::Style;
 use crate::model::table::{Cell, Table};
 use crate::model::{
-    BinEntry, CharRun, DocInfo, HwpDocument, PageDef, Paragraph, Section,
+    BinEntry, CharRun, DocInfo, FontFace, HwpDocument, PageDef, Paragraph, Section,
 };
 
 use elements::*;
@@ -33,18 +36,29 @@ pub fn parse_hwpx<R: Read + Seek>(reader: R) -> Result<HwpDocument> {
     // 2. Find section XML files via content.hpf manifest or by convention
     let section_xmls = find_section_xmls(&mut archive)?;
 
-    // 3. Parse each section
+    // 3. Parse header.xml for doc_info (charPr, paraPr, styles, fonts)
     let mut doc = HwpDocument::default();
     let mut doc_info = DocInfo::default();
     doc_info.fonts = vec![Vec::new(); 7];
 
+    let header_candidates = ["Contents/header.xml", "header.xml"];
+    for name in &header_candidates {
+        if let Ok(mut entry) = archive.by_name(name) {
+            let mut header_xml = String::new();
+            entry.read_to_string(&mut header_xml)?;
+            parse_header_xml(&header_xml, &mut doc_info)?;
+            break;
+        }
+    }
+
+    // 4. Parse each section
     let mut sections = Vec::new();
     for xml in &section_xmls {
         let section = parse_section_xml(xml, &mut doc_info)?;
         sections.push(section);
     }
 
-    // 4. Extract binary data
+    // 5. Extract binary data
     let bin_data = extract_bin_data(&mut archive)?;
 
     doc.doc_info = doc_info;
@@ -175,6 +189,356 @@ fn parse_opf_manifest(xml: &str) -> Vec<String> {
     hrefs
 }
 
+/// Parse header.xml for doc_info: charPr, paraPr, style, fontface/font.
+fn parse_header_xml(xml: &str, doc_info: &mut DocInfo) -> Result<()> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+
+    let mut font_script_idx: usize = 0;
+    // State for multi-element parsing
+    let mut current_charpr: Option<CharShape> = None;
+    let mut current_parapr: Option<ParaShape> = None;
+    let mut in_switch_default = false;
+    let mut in_switch_case = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                let local = e.local_name();
+                let tag = local.as_ref();
+
+                match tag {
+                    // ── Fonts ──
+                    b"fontface" => {
+                        // <hh:fontface lang="HANGUL" fontCnt="6">
+                        if let Some(lang) = attr_str(e, b"lang") {
+                            font_script_idx = match lang.as_str() {
+                                "HANGUL" => 0,
+                                "LATIN" => 1,
+                                "HANJA" => 2,
+                                "JAPANESE" => 3,
+                                "OTHER" => 4,
+                                "SYMBOL" => 5,
+                                "USER" => 6,
+                                _ => 0,
+                            };
+                        }
+                        // Also handle old-style Type attribute
+                        if let Some(script) = attr_str(e, b"Type") {
+                            font_script_idx = match script.as_str() {
+                                "Korean" => 0,
+                                "English" => 1,
+                                "Hanja" => 2,
+                                "Japanese" => 3,
+                                "Other" => 4,
+                                "Symbol" => 5,
+                                "User" => 6,
+                                _ => 0,
+                            };
+                        }
+                    }
+                    b"font" => {
+                        // <hh:font id="0" face="굴림" type="TTF">
+                        let mut face = FontFace::default();
+                        if let Some(name) = attr_str(e, b"face") {
+                            face.name = name;
+                        } else if let Some(name) = attr_str(e, b"Face") {
+                            face.name = name;
+                        }
+                        if font_script_idx < 7 {
+                            doc_info.fonts[font_script_idx].push(face);
+                        }
+                    }
+
+                    // ── CharPr ──
+                    b"charPr" => {
+                        let mut cs = CharShape::default();
+                        if let Some(h) = attr_parse::<u32>(e, b"height") {
+                            cs.height = h;
+                        }
+                        if let Some(c) = attr_str(e, b"textColor") {
+                            cs.text_color = parse_hwpx_color(&c);
+                        }
+                        if let Some(c) = attr_str(e, b"shadeColor") {
+                            cs.shade_color = parse_hwpx_color(&c);
+                        }
+                        if let Some(v) = attr_parse::<u16>(e, b"borderFillIDRef") {
+                            cs.border_fill_id = v;
+                        }
+                        current_charpr = Some(cs);
+                    }
+                    b"fontRef" => {
+                        if let Some(ref mut cs) = current_charpr {
+                            // Standard HWPX: <hh:fontRef hangul="2" latin="2" .../>
+                            if let Some(v) = attr_parse::<u16>(e, b"hangul") {
+                                cs.font_ids[0] = v;
+                                cs.font_ids[1] = attr_parse::<u16>(e, b"latin").unwrap_or(0);
+                                cs.font_ids[2] = attr_parse::<u16>(e, b"hanja").unwrap_or(0);
+                                cs.font_ids[3] = attr_parse::<u16>(e, b"japanese").unwrap_or(0);
+                                cs.font_ids[4] = attr_parse::<u16>(e, b"other").unwrap_or(0);
+                                cs.font_ids[5] = attr_parse::<u16>(e, b"symbol").unwrap_or(0);
+                                cs.font_ids[6] = attr_parse::<u16>(e, b"user").unwrap_or(0);
+                            }
+                            // Writer format: <hh:fontRef script="Korean" fontId="2"/>
+                            if let Some(script) = attr_str(e, b"script") {
+                                if let Some(fid) = attr_parse::<u16>(e, b"fontId") {
+                                    let idx = match script.as_str() {
+                                        "Korean" => 0, "English" => 1, "Hanja" => 2,
+                                        "Japanese" => 3, "Other" => 4, "Symbol" => 5, "User" => 6,
+                                        _ => 0,
+                                    };
+                                    cs.font_ids[idx] = fid;
+                                }
+                            }
+                        }
+                    }
+                    b"ratio" => {
+                        if let Some(ref mut cs) = current_charpr {
+                            cs.font_ratios[0] = attr_parse::<u8>(e, b"hangul").unwrap_or(100);
+                            cs.font_ratios[1] = attr_parse::<u8>(e, b"latin").unwrap_or(100);
+                            cs.font_ratios[2] = attr_parse::<u8>(e, b"hanja").unwrap_or(100);
+                            cs.font_ratios[3] = attr_parse::<u8>(e, b"japanese").unwrap_or(100);
+                            cs.font_ratios[4] = attr_parse::<u8>(e, b"other").unwrap_or(100);
+                            cs.font_ratios[5] = attr_parse::<u8>(e, b"symbol").unwrap_or(100);
+                            cs.font_ratios[6] = attr_parse::<u8>(e, b"user").unwrap_or(100);
+                        }
+                    }
+                    b"underline" => {
+                        if let Some(ref mut cs) = current_charpr {
+                            if let Some(t) = attr_str(e, b"type") {
+                                cs.underline = match t.as_str() {
+                                    "NONE" => crate::model::charshape::UnderlineType::None,
+                                    "BOTTOM" | "SINGLE" => crate::model::charshape::UnderlineType::Single,
+                                    "DOUBLE" => crate::model::charshape::UnderlineType::Double,
+                                    "THICK" => crate::model::charshape::UnderlineType::Thick,
+                                    _ => crate::model::charshape::UnderlineType::None,
+                                };
+                            }
+                            if let Some(c) = attr_str(e, b"color") {
+                                cs.underline_color = parse_hwpx_color(&c);
+                            }
+                        }
+                    }
+                    b"strikeout" => {
+                        if let Some(ref mut cs) = current_charpr {
+                            if let Some(s) = attr_str(e, b"shape") {
+                                cs.strikeout = match s.as_str() {
+                                    "NONE" => crate::model::charshape::StrikeoutType::None,
+                                    _ => crate::model::charshape::StrikeoutType::Single,
+                                };
+                            }
+                        }
+                    }
+
+                    // ── ParaPr ──
+                    b"paraPr" => {
+                        let mut ps = ParaShape::default();
+                        if let Some(v) = attr_parse::<u16>(e, b"tabPrIDRef") {
+                            ps.tab_def_id = v;
+                        }
+                        current_parapr = Some(ps);
+                    }
+                    b"align" => {
+                        if let Some(ref mut ps) = current_parapr {
+                            if let Some(h) = attr_str(e, b"horizontal") {
+                                ps.align = match h.as_str() {
+                                    "JUSTIFY" => Alignment::Justify,
+                                    "LEFT" => Alignment::Left,
+                                    "RIGHT" => Alignment::Right,
+                                    "CENTER" => Alignment::Center,
+                                    "DISTRIBUTE" => Alignment::Distribute,
+                                    _ => Alignment::Justify,
+                                };
+                            }
+                        }
+                    }
+                    b"heading" => {
+                        if let Some(ref mut ps) = current_parapr {
+                            if let Some(t) = attr_str(e, b"type") {
+                                ps.heading_type = match t.as_str() {
+                                    "NONE" => 0,
+                                    "OUTLINE" => 1,
+                                    "NUMBER" => 2,
+                                    "BULLET" => 3,
+                                    _ => 0,
+                                };
+                            }
+                            if let Some(v) = attr_parse::<u8>(e, b"level") {
+                                ps.heading_level = v;
+                            }
+                        }
+                    }
+                    b"breakSetting" => {
+                        if let Some(ref mut ps) = current_parapr {
+                            if let Some(v) = attr_str(e, b"pageBreakBefore") {
+                                ps.page_break_before = v == "1" || v == "true";
+                            }
+                        }
+                    }
+                    b"margin" => {
+                        // Margin inside paraPr — parse child elements (intent/left/right/prev/next)
+                        // These appear as child <hc:intent>, <hc:left> etc.
+                        // We'll handle them via the child element tags below
+                    }
+                    b"intent" => {
+                        if let Some(ref mut ps) = current_parapr {
+                            if let Some(v) = attr_parse::<i32>(e, b"value") {
+                                ps.indent = v;
+                            }
+                        }
+                    }
+                    b"left" => {
+                        if let Some(ref mut ps) = current_parapr {
+                            if let Some(v) = attr_parse::<i32>(e, b"value") {
+                                ps.margin_left = v;
+                            }
+                        }
+                    }
+                    b"right" => {
+                        if let Some(ref mut ps) = current_parapr {
+                            if let Some(v) = attr_parse::<i32>(e, b"value") {
+                                ps.margin_right = v;
+                            }
+                        }
+                    }
+                    b"prev" => {
+                        if let Some(ref mut ps) = current_parapr {
+                            if let Some(v) = attr_parse::<i32>(e, b"value") {
+                                ps.space_before = v;
+                            }
+                        }
+                    }
+                    b"next" => {
+                        if let Some(ref mut ps) = current_parapr {
+                            if let Some(v) = attr_parse::<i32>(e, b"value") {
+                                ps.space_after = v;
+                            }
+                        }
+                    }
+                    b"lineSpacing" => {
+                        if let Some(ref mut ps) = current_parapr {
+                            if let Some(v) = attr_parse::<i32>(e, b"value") {
+                                ps.line_spacing = v;
+                            }
+                            if let Some(t) = attr_str(e, b"type") {
+                                ps.line_spacing_type = match t.as_str() {
+                                    "PERCENT" => SpacingType::Percent,
+                                    "FIXED" => SpacingType::Fixed,
+                                    "BETWEEN_LINES" => SpacingType::BetweenLines,
+                                    "AT_LEAST" => SpacingType::AtLeast,
+                                    _ => SpacingType::Percent,
+                                };
+                            }
+                        }
+                    }
+
+                    // ── Style ──
+                    b"style" => {
+                        let mut style = Style::default();
+                        if let Some(n) = attr_str(e, b"name") {
+                            style.name = n;
+                        }
+                        if let Some(n) = attr_str(e, b"engName") {
+                            style.english_name = n;
+                        }
+                        if let Some(t) = attr_str(e, b"type") {
+                            style.style_type = match t.as_str() {
+                                "PARA" => 0,
+                                "CHAR" => 1,
+                                _ => 0,
+                            };
+                        }
+                        if let Some(v) = attr_parse::<u16>(e, b"paraPrIDRef") {
+                            style.para_shape_id = v;
+                        }
+                        if let Some(v) = attr_parse::<u16>(e, b"charPrIDRef") {
+                            style.char_shape_id = v;
+                        }
+                        if let Some(v) = attr_parse::<u16>(e, b"nextStyleIDRef") {
+                            style.next_style_id = v;
+                        }
+                        doc_info.styles.push(style);
+                    }
+
+                    // Skip hp:switch/hp:case/hp:default — we parse the first occurrence
+                    b"case" => { in_switch_case = true; }
+                    b"default" => { in_switch_default = true; }
+
+                    // Handle writer-generated tags (charShape/paraShape with flat attrs)
+                    b"charShape" | b"CHARSHAPE" => {
+                        let cs = parse_charshape_element(e);
+                        doc_info.char_shapes.push(cs);
+                    }
+                    b"paraShape" | b"PARASHAPE" => {
+                        let ps = parse_parashape_element(e);
+                        doc_info.para_shapes.push(ps);
+                    }
+                    b"STYLE" => {
+                        let style = parse_style_element(e);
+                        doc_info.styles.push(style);
+                    }
+                    b"FONT" => {
+                        let face = parse_font_element(e);
+                        if font_script_idx < 7 {
+                            doc_info.fonts[font_script_idx].push(face);
+                        }
+                    }
+                    b"FONTFACE" => {
+                        if let Some(script) = attr_str(e, b"Type") {
+                            font_script_idx = match script.as_str() {
+                                "Korean" => 0,
+                                "English" => 1,
+                                "Hanja" => 2,
+                                "Japanese" => 3,
+                                "Other" => 4,
+                                "Symbol" => 5,
+                                "User" => 6,
+                                _ => 0,
+                            };
+                        }
+                    }
+
+                    _ => {}
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let tag = e.local_name();
+                match tag.as_ref() {
+                    b"charPr" => {
+                        if let Some(cs) = current_charpr.take() {
+                            doc_info.char_shapes.push(cs);
+                        }
+                    }
+                    b"paraPr" => {
+                        if let Some(ps) = current_parapr.take() {
+                            doc_info.para_shapes.push(ps);
+                        }
+                    }
+                    b"case" => { in_switch_case = false; }
+                    b"default" => { in_switch_default = false; }
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(())
+}
+
+/// Parse HWPX color string ("#RRGGBB" or "none") to u32.
+fn parse_hwpx_color(s: &str) -> u32 {
+    if s == "none" || s.is_empty() {
+        return 0xFFFFFF;
+    }
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    u32::from_str_radix(hex, 16).unwrap_or(0)
+}
+
 /// Parse a single section XML into a Section, also collecting doc_info.
 fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
     let mut reader = Reader::from_str(xml);
@@ -198,7 +562,7 @@ fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
 
                 match tag {
                     // DocInfo elements (may appear in section XML in HWPX)
-                    b"CHARSHAPE" => {
+                    b"charShape" | b"CHARSHAPE" => {
                         let cs = parse_charshape_element(e);
                         doc_info.char_shapes.push(cs);
                     }
@@ -222,7 +586,7 @@ fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
                             };
                         }
                     }
-                    b"PARASHAPE" => {
+                    b"paraShape" | b"PARASHAPE" => {
                         let ps = parse_parashape_element(e);
                         doc_info.para_shapes.push(ps);
                     }
@@ -256,10 +620,12 @@ fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
                             &mut section,
                         );
                         let mut para = Paragraph::default();
-                        if let Some(id) = attr_parse::<u32>(e, b"ParaShapeId") {
+                        if let Some(id) = attr_parse::<u32>(e, b"paraPrIDRef")
+                            .or_else(|| attr_parse::<u32>(e, b"ParaShapeId")) {
                             para.para_shape_id = id;
                         }
-                        if let Some(id) = attr_parse::<u16>(e, b"StyleId") {
+                        if let Some(id) = attr_parse::<u16>(e, b"styleIDRef")
+                            .or_else(|| attr_parse::<u16>(e, b"StyleId")) {
                             para.style_id = id;
                         }
                         current_para = Some(para);
@@ -272,9 +638,10 @@ fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
 
                     // Character shape run
                     b"run" => {
-                        // <hp:run> — may contain charShapeIdRef attribute
+                        // <hp:run> — may contain charPrIDRef or charShapeIdRef attribute
                         if let Some(ref mut para) = current_para {
-                            if let Some(cs_id) = attr_parse::<u32>(e, b"charShapeIdRef") {
+                            if let Some(cs_id) = attr_parse::<u32>(e, b"charPrIDRef")
+                                .or_else(|| attr_parse::<u32>(e, b"charShapeIdRef")) {
                                 let pos = para.text.len() as u32;
                                 para.char_runs.push(CharRun {
                                     start_pos: pos,
