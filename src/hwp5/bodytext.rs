@@ -159,6 +159,58 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
                                 width,
                                 height,
                             });
+                        } else if ctrl_id == u32::from_le_bytes(*b"klh%") {
+                            // Hyperlink field (%hlk) — extract URL from payload
+                            if let Some(field) = parse_hyperlink_field(&record.payload) {
+                                para.controls.push(Control::Field(field));
+                            }
+                        } else if ctrl_id == u32::from_le_bytes(*b"dces")
+                            || ctrl_id == u32::from_le_bytes(*b"dloc")
+                        {
+                            // Section def / column def — structural controls, skip
+                        } else if ctrl_id == u32::from_le_bytes(*b"kbgp") {
+                            para.controls.push(Control::PageBreak);
+                        } else if ctrl_id == u32::from_le_bytes(*b"kbcs") {
+                            para.controls.push(Control::SectionBreak);
+                        } else if ctrl_id == u32::from_le_bytes(*b"kblc") {
+                            para.controls.push(Control::ColumnBreak);
+                        } else if ctrl_id == u32::from_le_bytes(*b"  nf") {
+                            // Footnote
+                            para.controls.push(Control::FootnoteEndnote(
+                                crate::model::control::FootnoteEndnote {
+                                    is_endnote: false,
+                                    number: 0,
+                                    paragraphs: vec![],
+                                },
+                            ));
+                        } else if ctrl_id == u32::from_le_bytes(*b"  ne") {
+                            // Endnote
+                            para.controls.push(Control::FootnoteEndnote(
+                                crate::model::control::FootnoteEndnote {
+                                    is_endnote: true,
+                                    number: 0,
+                                    paragraphs: vec![],
+                                },
+                            ));
+                        } else if ctrl_id == u32::from_le_bytes(*b"daeh") {
+                            // Header — structural, skip for now
+                        } else if ctrl_id == u32::from_le_bytes(*b"toof") {
+                            // Footer — structural, skip for now
+                        } else if ctrl_id == u32::from_le_bytes(*b" np%") {
+                            // Page number field (%pn )
+                            para.controls.push(Control::Field(
+                                crate::model::control::Field::PageNumber,
+                            ));
+                        } else if ctrl_id == u32::from_le_bytes(*b" cp%") {
+                            // Page count field (%pc )
+                            para.controls.push(Control::Field(
+                                crate::model::control::Field::PageCount,
+                            ));
+                        } else if ctrl_id == u32::from_le_bytes(*b" nf%") {
+                            // Filename field (%fn )
+                            para.controls.push(Control::Field(
+                                crate::model::control::Field::FileName,
+                            ));
                         } else {
                             para.controls.push(Control::Unknown {
                                 ctrl_id,
@@ -496,6 +548,73 @@ fn parse_picture_shape(data: &[u8], width: u32, height: u32) -> Option<ShapeObje
         orig_width,
         orig_height,
         crop: [0; 4],
+    })
+}
+
+/// Parse a hyperlink field from CTRL_HEADER payload.
+///
+/// Layout:
+///   0-3: ctrl_id (%hlk / klh%)
+///   4-7: properties (u32)
+///   8:   extra flag (u8)
+///   9-10: command string length in u16 chars (u16 LE)
+///   11+: command string (UTF-16LE)
+///
+/// The command string is semicolon-separated: `url;param1;param2;...`
+/// URLs may have backslash-escaped colons (`\:` → `:`).
+fn parse_hyperlink_field(data: &[u8]) -> Option<crate::model::control::Field> {
+    if data.len() < 11 {
+        return None;
+    }
+
+    let cmd_len = u16::from_le_bytes([data[9], data[10]]) as usize;
+    if cmd_len == 0 || data.len() < 11 + cmd_len * 2 {
+        // Fallback: scan for URL patterns in full payload
+        return scan_payload_for_url(data);
+    }
+
+    let utf16: Vec<u16> = data[11..11 + cmd_len * 2]
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let cmd = String::from_utf16_lossy(&utf16);
+
+    // Extract URL: first semicolon-separated part, unescape `\:`
+    let url = cmd
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .replace("\\:", ":")
+        .to_string();
+
+    Some(crate::model::control::Field::Hyperlink {
+        url,
+        text: String::new(),
+    })
+}
+
+/// Fallback: scan payload bytes for URL-like patterns in UTF-16LE.
+fn scan_payload_for_url(data: &[u8]) -> Option<crate::model::control::Field> {
+    if data.len() <= 8 {
+        return None;
+    }
+    let utf16: Vec<u16> = data[4..]
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let full = String::from_utf16_lossy(&utf16);
+    for part in full.split('\0').filter(|s| !s.is_empty()) {
+        let cleaned = part.replace("\\:", ":");
+        if cleaned.starts_with("http://") || cleaned.starts_with("https://") {
+            return Some(crate::model::control::Field::Hyperlink {
+                url: cleaned,
+                text: String::new(),
+            });
+        }
+    }
+    Some(crate::model::control::Field::Hyperlink {
+        url: String::new(),
+        text: String::new(),
     })
 }
 

@@ -99,6 +99,8 @@ pub enum EditorControl {
     Equation { script: String },
     #[serde(rename = "page_break")]
     PageBreak,
+    #[serde(rename = "hyperlink")]
+    Hyperlink { url: String, text: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,6 +306,12 @@ fn convert_control(ctrl: &Control, di: &DocInfo) -> Option<EditorControl> {
             script: eq.script.clone(),
         }),
         Control::PageBreak | Control::SectionBreak => Some(EditorControl::PageBreak),
+        Control::Field(crate::model::control::Field::Hyperlink { url, text }) => {
+            Some(EditorControl::Hyperlink {
+                url: url.clone(),
+                text: text.clone(),
+            })
+        }
         _ => None,
     }
 }
@@ -425,6 +433,12 @@ fn rebuild_control(ec: &EditorControl) -> Option<Control> {
                 font_name: String::new(),
                 font_size: 1000,
                 color: 0,
+            }))
+        }
+        EditorControl::Hyperlink { url, text } => {
+            Some(Control::Field(crate::model::control::Field::Hyperlink {
+                url: url.clone(),
+                text: text.clone(),
             }))
         }
     }

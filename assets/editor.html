@@ -189,6 +189,11 @@
       border: 1px dashed #ccc;
       border-radius: 3px;
     }
+    .hwp-hyperlink {
+      color: #0366d6;
+      text-decoration: underline;
+      cursor: pointer;
+    }
 
     /* ── Virtual scroll placeholder ── */
     .hwp-page-placeholder {
@@ -909,6 +914,18 @@
             div.appendChild(indicator);
             break;
           }
+          case 'hyperlink': {
+            if (ctrl.url) {
+              const a = document.createElement('a');
+              a.href = ctrl.url;
+              a.target = '_blank';
+              a.rel = 'noopener noreferrer';
+              a.textContent = ctrl.text || ctrl.url;
+              a.className = 'hwp-hyperlink';
+              div.appendChild(a);
+            }
+            break;
+          }
         }
       }
 
@@ -1095,6 +1112,8 @@
           });
         } else if (child.classList && child.classList.contains('hwp-equation')) {
           controls.push({ type: 'equation', script: child.textContent });
+        } else if (child.classList && child.classList.contains('hwp-hyperlink')) {
+          controls.push({ type: 'hyperlink', url: child.href || '', text: child.textContent || '' });
         } else if (child.tagName === 'BR') {
           // empty paragraph
         } else if (child.nodeType === Node.ELEMENT_NODE) {
