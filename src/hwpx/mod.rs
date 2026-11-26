@@ -552,6 +552,9 @@ fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
     let mut in_text = false;
     let mut font_script_idx: usize = 0;
 
+    // Footnote/endnote parsing state
+    let mut footnote_state: Option<FootnoteBuildState> = None;
+
     let mut buf = Vec::new();
 
     loop {
@@ -721,12 +724,59 @@ fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
                         }
                     }
 
+                    // Footnote / endnote
+                    b"footNote" | b"endNote" => {
+                        let is_endnote = tag == b"endNote";
+                        let number = attr_parse::<u16>(e, b"number").unwrap_or(0);
+                        // Save current paragraph — footnote content will be collected separately
+                        let saved = current_para.take();
+                        footnote_state = Some(FootnoteBuildState {
+                            is_endnote,
+                            number,
+                            paragraphs: Vec::new(),
+                            saved_para: saved,
+                            in_sub_list: false,
+                        });
+                    }
+                    b"subList" => {
+                        if let Some(ref mut fs) = footnote_state {
+                            fs.in_sub_list = true;
+                        }
+                    }
+
+                    // Hyperlink field via <hp:ctrl><hp:field type="hyperlink">
+                    b"field" => {
+                        if let Some(ref mut para) = current_para {
+                            if let Some(ftype) = attr_str(e, b"type") {
+                                if ftype == "hyperlink" {
+                                    let url = attr_str(e, b"command")
+                                        .unwrap_or_default()
+                                        .replace("\\:", ":");
+                                    para.controls.push(Control::Field(
+                                        crate::model::control::Field::Hyperlink {
+                                            url,
+                                            text: String::new(),
+                                        },
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
                     _ => {}
                 }
             }
             Ok(Event::Text(ref e)) => {
                 if in_text {
-                    if let Some(ref mut para) = current_para {
+                    if let Some(ref mut fs) = footnote_state {
+                        // Text inside footnote subList goes to footnote paragraph
+                        if fs.in_sub_list {
+                            if let Some(ref mut para) = current_para {
+                                let text = e.unescape().unwrap_or_default();
+                                para.text.push_str(&text);
+                            }
+                        }
+                    } else if let Some(ref mut para) = current_para {
                         let text = e.unescape().unwrap_or_default();
                         para.text.push_str(&text);
                     }
@@ -741,11 +791,40 @@ fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
                         in_text = false;
                     }
                     b"p" | b"P" | b"PARA" => {
-                        flush_para(
-                            &mut current_para,
-                            &mut current_cell,
-                            &mut section,
-                        );
+                        if let Some(ref mut fs) = footnote_state {
+                            // Inside footnote — collect paragraph into footnote
+                            if fs.in_sub_list {
+                                if let Some(para) = current_para.take() {
+                                    fs.paragraphs.push(para);
+                                }
+                            }
+                        } else {
+                            flush_para(
+                                &mut current_para,
+                                &mut current_cell,
+                                &mut section,
+                            );
+                        }
+                    }
+                    b"subList" => {
+                        if let Some(ref mut fs) = footnote_state {
+                            fs.in_sub_list = false;
+                        }
+                    }
+                    b"footNote" | b"endNote" => {
+                        if let Some(fs) = footnote_state.take() {
+                            // Restore saved paragraph and attach footnote as control
+                            current_para = fs.saved_para;
+                            if let Some(ref mut para) = current_para {
+                                para.controls.push(Control::FootnoteEndnote(
+                                    crate::model::control::FootnoteEndnote {
+                                        is_endnote: fs.is_endnote,
+                                        number: fs.number,
+                                        paragraphs: fs.paragraphs,
+                                    },
+                                ));
+                            }
+                        }
                     }
                     b"tc" | b"TC" | b"CELL" => {
                         // Flush paragraph into cell, then cell will be flushed on next tc or tbl end
@@ -812,6 +891,17 @@ fn parse_section_xml(xml: &str, doc_info: &mut DocInfo) -> Result<Section> {
     }
 
     Ok(section)
+}
+
+/// State for building a footnote/endnote from HWPX XML.
+struct FootnoteBuildState {
+    is_endnote: bool,
+    number: u16,
+    paragraphs: Vec<Paragraph>,
+    /// The paragraph that was being built when we entered the footnote.
+    /// We save it here and restore it when the footnote ends.
+    saved_para: Option<Paragraph>,
+    in_sub_list: bool,
 }
 
 fn flush_para(

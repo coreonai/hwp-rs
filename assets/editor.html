@@ -194,6 +194,28 @@
       text-decoration: underline;
       cursor: pointer;
     }
+    .hwp-footnote-ref {
+      display: inline;
+      font-size: 0.75em;
+      vertical-align: super;
+      color: #0366d6;
+      cursor: help;
+      margin: 0 1px;
+    }
+    .hwp-footnotes-area {
+      margin-top: 24px;
+      border-top: 1px solid #999;
+      padding-top: 8px;
+      font-size: 0.9em;
+      color: #444;
+    }
+    .hwp-footnote-item {
+      margin-bottom: 4px;
+    }
+    .hwp-footnote-item sup {
+      color: #0366d6;
+      margin-right: 4px;
+    }
 
     /* ── Virtual scroll placeholder ── */
     .hwp-page-placeholder {
@@ -783,6 +805,24 @@
         content.appendChild(renderParagraph(para, csMap, psMap, images));
       }
 
+      // Collect and render footnotes at page bottom
+      const fnRefs = content.querySelectorAll('.hwp-footnote-ref');
+      if (fnRefs.length > 0) {
+        const fnArea = document.createElement('div');
+        fnArea.className = 'hwp-footnotes-area';
+        fnRefs.forEach(ref => {
+          if (ref.dataset.isEndnote === 'true') return; // endnotes go at document end
+          const item = document.createElement('div');
+          item.className = 'hwp-footnote-item';
+          item.innerHTML = '<sup>' + (ref.dataset.number || '?') + '</sup>' +
+            (ref.dataset.fnText || '').replace(/</g, '&lt;');
+          fnArea.appendChild(item);
+        });
+        if (fnArea.children.length > 0) {
+          content.appendChild(fnArea);
+        }
+      }
+
       // Track focus → keep this page rendered while editing
       content.addEventListener('focus', () => { activePageIndex = i; }, true);
       content.addEventListener('blur', () => {
@@ -924,6 +964,19 @@
               a.className = 'hwp-hyperlink';
               div.appendChild(a);
             }
+            break;
+          }
+          case 'footnote': {
+            const ref = document.createElement('span');
+            ref.className = 'hwp-footnote-ref';
+            const kind = ctrl.is_endnote ? 'endnote' : 'footnote';
+            ref.textContent = ctrl.number || '?';
+            ref.title = (ctrl.is_endnote ? '[미주] ' : '[각주] ') + (ctrl.text || '');
+            ref.dataset.type = 'footnote';
+            ref.dataset.isEndnote = ctrl.is_endnote ? 'true' : 'false';
+            ref.dataset.number = ctrl.number || '0';
+            ref.dataset.fnText = ctrl.text || '';
+            div.appendChild(ref);
             break;
           }
         }
@@ -1114,6 +1167,15 @@
           controls.push({ type: 'equation', script: child.textContent });
         } else if (child.classList && child.classList.contains('hwp-hyperlink')) {
           controls.push({ type: 'hyperlink', url: child.href || '', text: child.textContent || '' });
+        } else if (child.classList && child.classList.contains('hwp-footnote-ref')) {
+          controls.push({
+            type: 'footnote',
+            is_endnote: child.dataset.isEndnote === 'true',
+            number: parseInt(child.dataset.number || '0'),
+            text: child.dataset.fnText || '',
+          });
+        } else if (child.classList && child.classList.contains('hwp-footnotes-area')) {
+          // Skip footnotes area during serialization (content is in the refs)
         } else if (child.tagName === 'BR') {
           // empty paragraph
         } else if (child.nodeType === Node.ELEMENT_NODE) {

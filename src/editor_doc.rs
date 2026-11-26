@@ -101,6 +101,12 @@ pub enum EditorControl {
     PageBreak,
     #[serde(rename = "hyperlink")]
     Hyperlink { url: String, text: String },
+    #[serde(rename = "footnote")]
+    Footnote {
+        is_endnote: bool,
+        number: u16,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,6 +318,19 @@ fn convert_control(ctrl: &Control, di: &DocInfo) -> Option<EditorControl> {
                 text: text.clone(),
             })
         }
+        Control::FootnoteEndnote(fn_en) => {
+            let text = fn_en
+                .paragraphs
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(EditorControl::Footnote {
+                is_endnote: fn_en.is_endnote,
+                number: fn_en.number,
+                text,
+            })
+        }
         _ => None,
     }
 }
@@ -440,6 +459,30 @@ fn rebuild_control(ec: &EditorControl) -> Option<Control> {
                 url: url.clone(),
                 text: text.clone(),
             }))
+        }
+        EditorControl::Footnote {
+            is_endnote,
+            number,
+            text,
+        } => {
+            let paragraphs = if text.is_empty() {
+                vec![]
+            } else {
+                text.split('\n')
+                    .map(|line| {
+                        let mut p = Paragraph::default();
+                        p.text = line.to_string();
+                        p
+                    })
+                    .collect()
+            };
+            Some(Control::FootnoteEndnote(
+                crate::model::control::FootnoteEndnote {
+                    is_endnote: *is_endnote,
+                    number: *number,
+                    paragraphs,
+                },
+            ))
         }
     }
 }
