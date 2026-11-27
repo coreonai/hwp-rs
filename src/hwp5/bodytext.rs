@@ -78,6 +78,8 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
     let mut gso_state: Option<GsoBuildState> = None;
     // Position map from most recent PARA_TEXT (u16 stream index → text char index)
     let mut current_pos_map: Option<Vec<u32>> = None;
+    // Footnote/endnote parsing state
+    let mut footnote_state: Option<FootnoteBuildState> = None;
 
     let mut i = 0;
     while i < records.len() {
@@ -89,9 +91,37 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
                 }
             }
             TAG_PARA_HEADER => {
+                // If we were inside a footnote and this paragraph is at the
+                // body level (level <= ctrl level), the footnote content is done.
+                if let Some(ref fs) = footnote_state {
+                    if record.header.level <= fs.ctrl_level {
+                        // Finalize footnote: flush current footnote para, attach to parent
+                        let mut fs = footnote_state.take().unwrap();
+                        if let Some(para) = current_para.take() {
+                            fs.paragraphs.push(para);
+                        }
+                        // Restore parent paragraph and attach footnote control
+                        current_para = fs.parent_para;
+                        if let Some(ref mut para) = current_para {
+                            para.controls.push(Control::FootnoteEndnote(
+                                crate::model::control::FootnoteEndnote {
+                                    is_endnote: fs.is_endnote,
+                                    number: fs.number,
+                                    paragraphs: fs.paragraphs,
+                                },
+                            ));
+                        }
+                    }
+                }
+
                 // Flush previous paragraph
                 if let Some(para) = current_para.take() {
-                    push_paragraph(&mut paragraphs, &mut table_stack, para);
+                    if footnote_state.is_some() {
+                        // Inside footnote — collect into footnote paragraphs
+                        footnote_state.as_mut().unwrap().paragraphs.push(para);
+                    } else {
+                        push_paragraph(&mut paragraphs, &mut table_stack, para);
+                    }
                 }
                 current_para = Some(parse_para_header(&record.payload).unwrap_or_default());
                 current_pos_map = None;
@@ -174,24 +204,20 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
                             para.controls.push(Control::SectionBreak);
                         } else if ctrl_id == u32::from_le_bytes(*b"kblc") {
                             para.controls.push(Control::ColumnBreak);
-                        } else if ctrl_id == u32::from_le_bytes(*b"  nf") {
-                            // Footnote
-                            para.controls.push(Control::FootnoteEndnote(
-                                crate::model::control::FootnoteEndnote {
-                                    is_endnote: false,
-                                    number: 0,
-                                    paragraphs: vec![],
-                                },
-                            ));
-                        } else if ctrl_id == u32::from_le_bytes(*b"  ne") {
-                            // Endnote
-                            para.controls.push(Control::FootnoteEndnote(
-                                crate::model::control::FootnoteEndnote {
-                                    is_endnote: true,
-                                    number: 0,
-                                    paragraphs: vec![],
-                                },
-                            ));
+                        } else if ctrl_id == u32::from_le_bytes(*b"  nf")
+                            || ctrl_id == u32::from_le_bytes(*b"  ne")
+                        {
+                            // Footnote (fn  ) or Endnote (en  )
+                            // Save current paragraph; subsequent records at deeper
+                            // levels contain the footnote content paragraphs.
+                            let is_endnote = ctrl_id == u32::from_le_bytes(*b"  ne");
+                            footnote_state = Some(FootnoteBuildState {
+                                is_endnote,
+                                number: 0,
+                                paragraphs: Vec::new(),
+                                parent_para: current_para.take(),
+                                ctrl_level: record.header.level,
+                            });
                         } else if ctrl_id == u32::from_le_bytes(*b"daeh") {
                             // Header — structural, skip for now
                         } else if ctrl_id == u32::from_le_bytes(*b"toof") {
@@ -288,6 +314,23 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
         i += 1;
     }
 
+    // Finalize any open footnote
+    if let Some(mut fs) = footnote_state.take() {
+        if let Some(para) = current_para.take() {
+            fs.paragraphs.push(para);
+        }
+        current_para = fs.parent_para;
+        if let Some(ref mut para) = current_para {
+            para.controls.push(Control::FootnoteEndnote(
+                crate::model::control::FootnoteEndnote {
+                    is_endnote: fs.is_endnote,
+                    number: fs.number,
+                    paragraphs: fs.paragraphs,
+                },
+            ));
+        }
+    }
+
     // Flush last paragraph
     if let Some(para) = current_para.take() {
         push_paragraph(&mut paragraphs, &mut table_stack, para);
@@ -308,6 +351,17 @@ fn parse_section_records(records: &[Record]) -> Result<Section> {
 struct TableBuildState {
     table: Table,
     cells_collected: u32,
+}
+
+/// State for building a footnote/endnote from HWP5 records.
+struct FootnoteBuildState {
+    is_endnote: bool,
+    number: u16,
+    paragraphs: Vec<Paragraph>,
+    /// The paragraph that contained the footnote anchor.
+    parent_para: Option<Paragraph>,
+    /// Level of the CTRL_HEADER record that started this footnote.
+    ctrl_level: u16,
 }
 
 /// State for building a GSO (GeneralShapeObject) picture control.
